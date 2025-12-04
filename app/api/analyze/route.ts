@@ -1,70 +1,60 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
-
-// Vercel Edge 아닌 Node Runtime 사용 (파일 처리 안정)
 export const runtime = "nodejs";
+
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 export async function POST(req: Request) {
   try {
-    // ✅ multipart/form-data 파싱
     const formData = await req.formData();
-    const file = formData.get("image") as File | null;
+    const file = formData.get("image");
 
-    if (!file) {
+    if (!file || !(file instanceof File)) {
       return NextResponse.json(
-        { success: false, error: "이미지 파일이 없습니다." },
+        { error: "이미지 파일이 전달되지 않았습니다." },
         { status: 400 }
       );
     }
 
-    // ✅ 이미지 → Base64 변환
+    // 이미지 파일 → base64 변환
     const buffer = Buffer.from(await file.arrayBuffer());
-    const base64 = buffer.toString("base64");
+    const base64Image = buffer.toString("base64");
 
-    const mimeType = file.type || "image/jpeg";
-    const base64Image = `data:${mimeType};base64,${base64}`;
-
-    // ✅ OpenAI Vision 요청 (최신 SDK 규격 정상 포맷)
-    const aiResponse = await openai.responses.create({
-      model: "gpt-4.1-mini",
+    // OpenAI vision 요청
+    const response = await client.responses.create({
+      model: "gpt-4.1",
       input: [
         {
           role: "user",
           content: [
             {
               type: "input_text",
-              text: "작물 병해 증상을 분석하고 원인과 대응 방법을 한국어로 알려주세요."
+              text: "이 작물 사진의 병해 상태를 진단하고 원인과 해결 방법을 알려주세요.",
             },
             {
               type: "input_image",
-              image_url: base64Image
-            }
-          ]
-        }
-      ]
+              image_url: `data:image/jpeg;base64,${base64Image}`,
+            },
+          ],
+        },
+      ],
     });
 
-    // ✅ 결과 텍스트 추출
-    const outputText =
-      aiResponse.output_text ||
-      aiResponse.output?.[0]?.content?.[0]?.text ||
-      "AI 분석 결과를 가져오지 못했습니다.";
+    const result =
+      response.output_text ||
+      response.output?.[0]?.content?.[0]?.text ||
+      "결과를 생성하지 못했습니다.";
 
-    return NextResponse.json({
-      success: true,
-      result: outputText,
-    });
-  } catch (error: any) {
+    return NextResponse.json({ result });
+  } catch (error) {
     console.error("AI 분석 오류:", error);
-
     return NextResponse.json(
       {
-        success: false,
-        error: error?.message || "서버 내부 오류 발생",
+        error: "AI 진단 중 오류 발생",
+        detail: String(error),
       },
       { status: 500 }
     );
