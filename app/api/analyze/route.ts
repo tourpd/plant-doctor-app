@@ -3,7 +3,7 @@ import OpenAI from "openai";
 
 export const runtime = "nodejs";
 
-const client = new OpenAI({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
@@ -19,12 +19,12 @@ export async function POST(req: Request) {
       );
     }
 
-    // 이미지 파일 → base64 변환
+    // 파일 → base64 변환
     const buffer = Buffer.from(await file.arrayBuffer());
     const base64Image = buffer.toString("base64");
 
-    // OpenAI vision 요청
-    const response = await client.responses.create({
+    // ✅ OpenAI Vision 요청
+    const response = await openai.responses.create({
       model: "gpt-4.1",
       input: [
         {
@@ -51,6 +51,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ result });
   } catch (error) {
     console.error("AI 분석 오류:", error);
+
     return NextResponse.json(
       {
         error: "AI 진단 중 오류 발생",
