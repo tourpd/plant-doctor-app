@@ -1,0 +1,15 @@
+import { initializeApp } from "firebase/app";
+import { getStorage } from "firebase/storage";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDiwJ-87D_cRH--eayNarLKHFXlGJRLkRY",
+  authDomain: "farmer-ai-ea9eb.firebaseapp.com",
+  projectId: "farmer-ai-ea9eb",
+  storageBucket: "farmer-ai-ea9eb.firebasestorage.app",
+  messagingSenderId: "531780163104",
+  appId: "1:531780163104:web:28137ec5c1c715f3264e45"
+};
+
+const app = initializeApp(firebaseConfig);
+
+export const storage = ge
