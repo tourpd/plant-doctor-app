@@ -19,6 +19,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // 이미지 → base64 변환
     const buffer = Buffer.from(await file.arrayBuffer());
     const base64Image = buffer.toString("base64");
 
@@ -35,17 +36,15 @@ export async function POST(req: Request) {
             {
               type: "input_image",
               image_url: `data:image/jpeg;base64,${base64Image}`,
-              detail: "auto"
-            }
+              detail: "auto",
+            },
           ],
         },
       ],
     });
 
     const result =
-      response.output_text ??
-      response.output?.[0]?.content?.[0]?.text ??
-      "결과를 생성하지 못했습니다.";
+      response.output_text || "결과를 생성하지 못했습니다.";
 
     return NextResponse.json({ result });
 
