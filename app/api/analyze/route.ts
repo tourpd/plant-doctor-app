@@ -1,54 +1,71 @@
-// app/api/analyze/route.ts
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY!,
 });
+
+// Vercel Edge 아닌 Node Runtime 사용 (파일 처리 안정)
+export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
+    // ✅ multipart/form-data 파싱
     const formData = await req.formData();
-    const file = formData.get("file") as File | null;
+    const file = formData.get("image") as File | null;
 
     if (!file) {
       return NextResponse.json(
-        { success: false, error: "파일이 없습니다." },
+        { success: false, error: "이미지 파일이 없습니다." },
         { status: 400 }
       );
     }
 
-    // 여기서 file.arrayBuffer() 써서 바이너리 변환
+    // ✅ 이미지 → Base64 변환
     const buffer = Buffer.from(await file.arrayBuffer());
+    const base64 = buffer.toString("base64");
 
-    // 예: gpt-4o-mini vision 호출 (실제 프롬프트는 취향대로 수정)
-    const result = await openai.responses.create({
+    const mimeType = file.type || "image/jpeg";
+    const base64Image = `data:${mimeType};base64,${base64}`;
+
+    // ✅ OpenAI Vision 요청 (최신 SDK 규격 정상 포맷)
+    const aiResponse = await openai.responses.create({
       model: "gpt-4.1-mini",
       input: [
         {
           role: "user",
           content: [
-            { type: "input_text", text: "이 사진의 작물 병해를 농민에게 설명해 주세요." },
+            {
+              type: "input_text",
+              text: "작물 병해 증상을 분석하고 원인과 대응 방법을 한국어로 알려주세요."
+            },
             {
               type: "input_image",
-              image: {
-                data: buffer.toString("base64"),
-                format: "jpeg", // 또는 png 등 업로드한 확장자에 맞게
-              },
-            },
-          ],
-        },
-      ],
+              image_url: base64Image
+            }
+          ]
+        }
+      ]
     });
 
-    const markdown =
-      result.output[0]?.content[0]?.text ?? "설명문을 가져오지 못했습니다.";
+    // ✅ 결과 텍스트 추출
+    const outputText =
+      aiResponse.output_text ||
+      aiResponse.output?.[0]?.content?.[0]?.text ||
+      "AI 분석 결과를 가져오지 못했습니다.";
 
-    return NextResponse.json({ success: true, markdown });
-  } catch (err: any) {
-    console.error("API /api/analyze 에러:", err);
+    return NextResponse.json({
+      success: true,
+      result: outputText,
+    });
+  } catch (error: any) {
+    console.error("AI 분석 오류:", error);
+
     return NextResponse.json(
-      { success: false, error: err.message ?? "서버 에러" },
+      {
+        success: false,
+        error: error?.message || "서버 내부 오류 발생",
+      },
       { status: 500 }
     );
   }
