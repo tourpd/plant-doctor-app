@@ -19,11 +19,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // 이미지 → base64
     const buffer = Buffer.from(await file.arrayBuffer());
     const base64Image = buffer.toString("base64");
 
-    // ✅ 최신 Vision 메시지 형식
     const response = await client.responses.create({
       model: "gpt-4.1-mini",
       input: [
@@ -37,7 +35,7 @@ export async function POST(req: Request) {
             {
               type: "input_image",
               image_url: `data:image/jpeg;base64,${base64Image}`,
-              detail: "auto", // ✅ 반드시 포함
+              detail: "auto"   // ✅ 이 줄이 핵심
             },
           ],
         },
@@ -53,7 +51,6 @@ export async function POST(req: Request) {
 
   } catch (error) {
     console.error("AI 분석 오류:", error);
-
     return NextResponse.json(
       {
         error: "AI 진단 중 오류 발생",
