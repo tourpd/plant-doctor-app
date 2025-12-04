@@ -35,8 +35,8 @@ export async function POST(req: Request) {
             {
               type: "input_image",
               image_url: `data:image/jpeg;base64,${base64Image}`,
-              detail: "auto"   // ✅ 이 줄이 핵심
-            },
+              detail: "auto"
+            }
           ],
         },
       ],
