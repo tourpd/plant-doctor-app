@@ -19,11 +19,11 @@ export async function POST(req: Request) {
       );
     }
 
-    // 파일 → base64 변환
+    // 이미지 → base64
     const buffer = Buffer.from(await file.arrayBuffer());
     const base64Image = buffer.toString("base64");
 
-    // ✅ 최신 OpenAI vision message schema (detail 반드시 포함)
+    // ✅ 최신 Vision 메시지 형식
     const response = await client.responses.create({
       model: "gpt-4.1-mini",
       input: [
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
             {
               type: "input_image",
               image_url: `data:image/jpeg;base64,${base64Image}`,
-              detail: "auto",
+              detail: "auto", // ✅ 반드시 포함
             },
           ],
         },
@@ -45,8 +45,8 @@ export async function POST(req: Request) {
     });
 
     const result =
-      response.output_text ||
-      response.output?.[0]?.content?.[0]?.text ||
+      response.output_text ??
+      response.output?.[0]?.content?.[0]?.text ??
       "결과를 생성하지 못했습니다.";
 
     return NextResponse.json({ result });
