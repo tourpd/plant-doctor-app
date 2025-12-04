@@ -3,8 +3,8 @@ import OpenAI from "openai";
 
 export const runtime = "nodejs";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
 });
 
 export async function POST(req: Request) {
@@ -23,9 +23,9 @@ export async function POST(req: Request) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const base64Image = buffer.toString("base64");
 
-    // ✅ OpenAI Vision 요청
-    const response = await openai.responses.create({
-      model: "gpt-4.1",
+    // ✅ 최신 OpenAI vision message schema (detail 반드시 포함)
+    const response = await client.responses.create({
+      model: "gpt-4.1-mini",
       input: [
         {
           role: "user",
@@ -37,6 +37,7 @@ export async function POST(req: Request) {
             {
               type: "input_image",
               image_url: `data:image/jpeg;base64,${base64Image}`,
+              detail: "auto",
             },
           ],
         },
@@ -49,6 +50,7 @@ export async function POST(req: Request) {
       "결과를 생성하지 못했습니다.";
 
     return NextResponse.json({ result });
+
   } catch (error) {
     console.error("AI 분석 오류:", error);
 
