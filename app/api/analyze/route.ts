@@ -3,57 +3,44 @@ import OpenAI from "openai";
 
 export async function POST(req: Request) {
   try {
-    const formData = await req.formData();
-    const file = formData.get("image") as File;
+    console.log("==== API ANALYZE START ====");
 
-    if (!file) {
-      return NextResponse.json(
-        { error: "이미지가 업로드되지 않았습니다." },
-        { status: 400 }
-      );
+    const apiKey = process.env.OPENAI_API_KEY;
+
+    console.log("OPENAI_API_KEY:", apiKey ? "FOUND ✅" : "NOT FOUND ❌");
+
+    if (!apiKey) {
+      throw new Error("OPENAI_API_KEY is missing");
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const client = new OpenAI({ apiKey });
 
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+    const { imageUrl } = await req.json();
 
-    const result = await openai.chat.completions.create({
-      model: "gpt-4.1-mini",
+    console.log("IMAGE URL:", imageUrl);
+
+    const response = await client.chat.completions.create({
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "user",
-          content: [
-            {
-              type: "text",
-              text:
-                "이 사진을 보고 작물 병해를 진단하고 원인과 대처법을 한국어로 간단히 알려줘.",
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${file.type};base64,${buffer.toString("base64")}`,
-              },
-            },
-          ],
+          content: `이 사진 속 작물 병해를 분석해 주세요. 사진 URL: ${imageUrl}`,
         },
       ],
     });
 
-    const response =
-      result.choices[0]?.message?.content || "AI 분석 결과 없음";
+    const result = response.choices[0].message.content;
 
     return NextResponse.json({
-      success: true,
-      diagnosis: response,
+      ok: true,
+      result,
     });
-  } catch (error) {
-    console.error("AI 진단 에러:", error);
+  } catch (err: any) {
+    console.error("🔥 AI ANALYZE ERROR:", err);
 
-    return NextResponse.json(
-      { error: "AI 처리 중 서버 오류 발생" },
-      { status: 500 }
-    );
+    return NextResponse.json({
+      ok: false,
+      error: err.message || String(err),
+    });
   }
 }
