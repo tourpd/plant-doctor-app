@@ -1,125 +1,108 @@
-"use client";
+'use client';
 
 import { useState } from "react";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "../lib/firebase";
 
-export default function Home() {
-  const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState("");
+export default function HomePage() {
+  const [images, setImages] = useState<File[]>([]);
+  const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
-  const uploadImage = async () => {
-    if (!file) return alert("사진을 선택하세요.");
+  const handleSelectImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    setImages(Array.from(e.target.files).slice(0, 4));
+  };
 
+  const handleDiagnose = async () => {
     setLoading(true);
 
-    try {
-      // ==========================
-      // 1. Firebase Storage 업로드
-      // ==========================
-      const path = `photos/${Date.now()}_${file.name}`;
-      const fileRef = ref(storage, path);
+    const formData = new FormData();
+    images.forEach(img => formData.append("images", img));
 
-      await uploadBytes(fileRef, file);
+    const res = await fetch("/api/diagnose", {
+      method: "POST",
+      body: formData
+    });
 
-      const imageUrl = await getDownloadURL(fileRef);
-
-      console.log("✅ 이미지 URL:", imageUrl);
-
-      // ==========================
-      // 2. OpenAI Vision 진단
-      // ==========================
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${
-            process.env.NEXT_PUBLIC_OPENAI_API_KEY
-          }`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content:
-                "당신은 농업 병해충 진단 전문가입니다. 사진을 보고 병명, 증상 원인, 대처 방법, 권장 약제를 알려주세요."
-            },
-            {
-              role: "user",
-              content: [
-                { type: "text", text: "이 작물 병해를 진단해주세요." },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: imageUrl
-                  }
-                }
-              ]
-            }
-          ],
-          max_tokens: 600
-        })
-      });
-
-      const data = await res.json();
-      console.log("AI:", data);
-
-      setResult(data.choices?.[0]?.message?.content || "진단 실패");
-
-    } catch (err) {
-      console.error("Error:", err);
-      setResult("업로드 혹은 AI 분석 중 오류 발생");
-    }
-
+    const data = await res.json();
+    setResult(data);
     setLoading(false);
   };
 
   return (
-    <main style={{ padding: 40, maxWidth: 700, margin: "auto" }}>
-      <h2>🐼 또봉이 병해 사진 진단</h2>
-      <p>작물 병해가 의심될 때 사진을 보내면 AI가 분석합니다.</p>
+    <main className="min-h-screen p-6 bg-green-50 flex flex-col items-center">
+      <h1 className="text-2xl font-bold mb-2">
+        농사톡톡 병해 진단
+      </h1>
 
-      <input
-        type="file"
-        accept="image/*"
-        onChange={(e) => setFile(e.target.files?.[0] || null)}
-      />
-
-      <p>
-        {file ? `📷 선택됨: ${file.name}` : "❌ 파일 선택 없음"}
+      <p className="text-gray-600 mb-4">
+        작물 사진을 최대 4장까지 업로드하세요.
       </p>
 
-      <button
-        onClick={uploadImage}
-        disabled={loading}
-        style={{
-          padding: "12px 20px",
-          background: "red",
-          color: "white",
-          border: "none",
-          borderRadius: 8,
-          cursor: "pointer"
-        }}
-      >
-        {loading ? "진단 중..." : "진단 요청 보내기"}
-      </button>
+      <label className="grid grid-cols-2 gap-3 cursor-pointer">
+        {[0,1,2,3].map(i => (
+          <div
+            key={i}
+            className="w-36 h-36 border-2 border-dashed border-green-400 rounded-lg bg-white flex items-center justify-center overflow-hidden"
+          >
+            {images[i] ? (
+              <img
+                src={URL.createObjectURL(images[i])}
+                className="object-cover w-full h-full"
+              />
+            ) : (
+              <span className="text-green-500">
+                + 추가
+              </span>
+            )}
+          </div>
+        ))}
+
+        <input
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={handleSelectImages}
+          className="hidden"
+        />
+      </label>
+
+      {images.length > 0 && (
+        <button
+          className="mt-5 px-6 py-2 bg-green-600 text-white rounded-xl"
+          onClick={handleDiagnose}
+          disabled={loading}
+        >
+          {loading ? "AI 분석 중..." : "AI 진단 요청"}
+        </button>
+      )}
 
       {result && (
-        <pre
-          style={{
-            marginTop: 30,
-            padding: 15,
-            background: "#111",
-            color: "#0f0",
-            whiteSpace: "pre-wrap"
-          }}
-        >
-          ✅ AI 진단 결과
+        <div className="mt-6 w-full max-w-md bg-white p-4 rounded shadow">
+          <h2 className="font-bold mb-2">
+            진단 결과
+          </h2>
 
-{result}
-        </pre>
+          <p>병명: {result.diseaseName}</p>
+          <p>위험도: {result.riskLevel}</p>
+
+          <h3 className="mt-3 font-semibold">
+            대응 방법
+          </h3>
+          <ul className="list-disc ml-5">
+            {result.solution?.map((s: string, i: number) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ul>
+
+          <h3 className="mt-3 font-semibold">
+            추천
+          </h3>
+          <ul className="list-disc ml-5">
+            {result.recommend?.map((s: string, i: number) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ul>
+        </div>
       )}
     </main>
   );
