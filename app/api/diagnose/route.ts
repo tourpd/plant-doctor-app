@@ -3,10 +3,11 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-// ✅ 환경변수 로드 로그
+/* ===== ENV CHECK ===== */
 console.log("===== ENV CHECK START =====");
 console.log("OPENAI_API_KEY =", process.env.OPENAI_API_KEY);
 console.log("===== ENV CHECK END =====");
+/* ===================== */
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -20,12 +21,10 @@ export async function POST(req: Request) {
     const file = formData.get("image") as File | null;
 
     if (!file) {
-
       return NextResponse.json(
         { error: "이미지가 전달되지 않았습니다." },
         { status: 400 }
       );
-
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
@@ -39,7 +38,6 @@ export async function POST(req: Request) {
         {
           role: "user",
           content: [
-
             {
               type: "text",
               text: `
@@ -52,7 +50,7 @@ export async function POST(req: Request) {
   "solution": [],
   "recommend": []
 }
-            `
+              `,
             },
 
             {
@@ -61,7 +59,6 @@ export async function POST(req: Request) {
                 url: \`data:image/jpeg;base64,\${base64}\`
               }
             }
-
           ]
         }
       ],
