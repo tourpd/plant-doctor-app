@@ -3,31 +3,43 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+// ✅ 환경변수 로드 로그
+console.log("===== ENV CHECK START =====");
+console.log("OPENAI_API_KEY =", process.env.OPENAI_API_KEY);
+console.log("===== ENV CHECK END =====");
+
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
 export async function POST(req: Request) {
+
   try {
+
     const formData = await req.formData();
     const file = formData.get("image") as File | null;
 
     if (!file) {
+
       return NextResponse.json(
         { error: "이미지가 전달되지 않았습니다." },
         { status: 400 }
       );
+
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const base64 = buffer.toString("base64");
 
     const result = await client.chat.completions.create({
+
       model: "gpt-4o-mini",
+
       messages: [
         {
           role: "user",
           content: [
+
             {
               type: "text",
               text: `
@@ -40,17 +52,20 @@ export async function POST(req: Request) {
   "solution": [],
   "recommend": []
 }
-`
+            `
             },
+
             {
               type: "image_url",
               image_url: {
-                url: `data:image/jpeg;base64,${base64}`
+                url: \`data:image/jpeg;base64,\${base64}\`
               }
             }
+
           ]
         }
       ],
+
       max_tokens: 800,
     });
 
@@ -70,4 +85,5 @@ export async function POST(req: Request) {
     );
 
   }
+
 }
