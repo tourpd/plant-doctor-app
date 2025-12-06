@@ -1,68 +1,68 @@
-// app/api/diagnose/route.ts
-
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
 
-export const runtime = "nodejs";
+export const runtime = "edge";
 
-export async function POST(req: Request) {          // ✅ 반드시 POST
+export async function POST(req: Request) {
   try {
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json(
-        { error: "OPENAI_API_KEY missing" },
-        { status: 500 }
-      );
-    }
-
-    const form = await req.formData();
-    const file = form.get("image") as File | null;
+    const formData = await req.formData();
+    const file = formData.get("image") as File | null;
 
     if (!file) {
       return NextResponse.json(
-        { error: "No image file uploaded" },
+        { error: "이미지가 없습니다." },
         { status: 400 }
       );
     }
 
-    // File -> Buffer
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const arrayBuffer = await file.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString("base64");
 
-    const client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "API KEY 없음" },
+        { status: 500 }
+      );
+    }
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4.1",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "이 작물 사진의 병해충 상태를 분석하고 조치법을 알려줘",
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:image/jpeg;base64,${base64}`,
+                },
+              },
+            ],
+          },
+        ],
+      }),
     });
 
-    // Vision 요청
-    const response = await client.responses.create({
-      model: "gpt-4.1-mini",
-      input: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: "이 사진의 작물 병해 또는 이상 증상을 분석하고 농민이 바로 조치할 수 있는 구체적인 처방을 한국어로 알려줘"
-            },
-            {
-              type: "input_image",
-              image: buffer
-            }
-          ]
-        }
-      ]
-    });
+    const data = await response.json();
 
-    const text =
-      response.output_text ||
-      response.output?.[0]?.content?.[0]?.text ||
-      "진단 결과를 생성하지 못했습니다.";
+    const result =
+      data?.choices?.[0]?.message?.content || "분석 결과 없음";
 
-    return NextResponse.json({ result: text });
-
+    return NextResponse.json({ result });
   } catch (err) {
-    console.error("Diagnose error:", err);
-
+    console.error(err);
     return NextResponse.json(
-      { error: "AI 진단 서버 오류 발생" },
+      { error: "서버 진단 처리 실패" },
       { status: 500 }
     );
   }
