@@ -1,62 +1,117 @@
 import { NextResponse } from "next/server";
+import OpenAI from "openai";
 
-export async function POST(req:Request){
+export const runtime = "nodejs";
 
-  try{
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+});
 
-    const data = await req.formData();
-    const file = data.get("file");
+export async function POST(req: Request) {
+  try {
+    const formData = await req.formData();
+    const file = formData.get("file") as File | null;
 
-    if(!file){
+    if (!file) {
       return NextResponse.json({
-        ok:false,
-        error:"사진 파일이 접수되지 않았습니다."
+        ok: false,
+        error: "이미지 파일이 전달되지 않았습니다.",
       });
     }
 
-    // ✅ 전문가 리포트 고정 출력
-    return NextResponse.json({
+    // ---- 파일 → BASE64 변환 ----
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const base64 = buffer.toString("base64");
 
-      ok:true,
+    // ---- 농업 전문 진단 프롬프트 ----
+    const prompt = `
+너는 대한민국 농업 병해충 전문 진단 AI다.
 
-      crop:"옥수수",
+아래 사진을 기반으로 반드시 다음 항목을 포함하여
+**농민이 실제로 바로 대응할 수 있을 수준의 상세 리포트 형식으로 작성하라.**
 
-      diagnosis:"멸강나방 · 나방류 피해 의심",
+반드시 아래 구조 유지:
 
-      symptoms:`
-열매 상단 및 측면이 불규칙하게 파여 있음
-수액 흐른 흔적, 벌레 분변배설물 발견
-껍질 손상 부위가 갈변되며 상품가치 급락
-`,
+[추정 작물]
+작물명 + (신뢰도 %)
 
-      reason:`
-고온·다습 조건에서 나방 유충 급증
-알 부화 직후 열악지 또는 심부로 침투
-방제 적기를 놓치면 피해가 급속 확대됨
-`,
+[의심 병해충]
+- 1번 후보
+- 2번 후보
+- 3번 후보
 
-      solution:`
-① BT제 또는 유충 전용 약제 살포 (7일 간격 반복)
-② 피해 과실 제거
-③ 유인등 및 페로몬 트랩 설치
-④ 발생 초기에 예방적 약제 살포 권장
-`,
+[판단 근거]
+사진 속 주요 증상 설명
 
-      caution:`
-동일 약제 연속 살포 금지
-살충제 저항성 관리 필수
-시설 및 주위 잡초 제거 철저
-`
+[발생 환경]
+기후·토양·수분·재배 조건 분석
 
+[방제 방법]
+1) 친환경 방제
+2) 약제 방제(등록 성분 기준)
+3) 살포 타이밍
+
+[예방 관리 요령]
+재발 방지 수칙
+
+[농가 즉시 행동 체크리스트]
+- 오늘 할 일
+- 일주일 관리 항목
+`;
+
+    // ---- GPT 호출 ----
+    const response = await client.responses.create({
+      model: "gpt-4.1",
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: prompt },
+            {
+              type: "input_image",
+              image_base64: base64,
+            },
+          ],
+        },
+      ],
+      max_output_tokens: 700,
     });
 
-  }catch(err:any){
+    // ---- 응답 텍스트 처리 ----
+    let output = "";
+
+    if (response.output_text) {
+      output = response.output_text;
+    } else if (response.output?.length) {
+      for (const item of response.output) {
+        if (item.type === "message") {
+          for (const content of item.content || []) {
+            if (content.type === "output_text") {
+              output += content.text;
+            }
+          }
+        }
+      }
+    }
+
+    if (!output.trim()) {
+      return NextResponse.json({
+        ok: false,
+        error: "AI 응답이 비어 있습니다.",
+      });
+    }
 
     return NextResponse.json({
-      ok:false,
-      error:"AI 서버 처리 오류"
+      ok: true,
+      text: output,
     });
 
+  } catch (err) {
+    console.error("AI 분석 실패:", err);
+
+    return NextResponse.json({
+      ok: false,
+      error: "AI 서버 처리 중 오류가 발생했습니다.",
+    });
   }
-
 }
