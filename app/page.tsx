@@ -3,14 +3,15 @@
 import { useState } from "react";
 
 export default function HomePage() {
+
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFile = (e:any) => {
     const f = e.target.files?.[0];
-    if (!f) return;
+    if(!f) return;
 
     setFile(f);
     setResult(null);
@@ -21,154 +22,166 @@ export default function HomePage() {
   };
 
   const analyze = async () => {
-    if (!file) {
-      alert("사진을 먼저 선택해주세요");
+
+    if(!file){
+      alert("진단할 사진을 먼저 선택해주세요");
       return;
     }
 
-    try {
-      setLoading(true);
+    setLoading(true);
 
-      const form = new FormData();
-      form.append("file", file);
+    const form = new FormData();
+    form.append("file", file);
 
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        body: form,
-      });
+    const res = await fetch("/api/analyze",{
+      method:"POST",
+      body: form
+    });
 
-      const data = await res.json();
-      setResult(data);
-    } catch (e) {
-      console.error(e);
-      alert("서버 통신 오류");
-    } finally {
-      setLoading(false);
-    }
+    const data = await res.json();
+    setResult(data);
+
+    setLoading(false);
   };
 
   return (
+
     <main style={{
-      minHeight: "100vh",
-      background: "#000",
-      color: "#00ff88",
-      padding: 20,
-      textAlign: "center"
+      minHeight:'100vh',
+      background:'#000',
+      color:'#00ff88',
+      padding:'20px',
+      maxWidth: 500,
+      margin:'0 auto'
     }}>
 
-      <h2 style={{ marginBottom: 20 }}>
+      <h2 style={{textAlign:"center"}}>
         🐞 또봉이 농사 상담 AI
       </h2>
 
-      {/* 업로드 영역 */}
+      {/* 📸 업로드 영역 */}
       <label style={{
-        display: "block",
-        border: "2px dashed #00ff88",
-        borderRadius: 12,
-        padding: "40px 10px",
-        marginBottom: 20,
-        cursor: "pointer"
+        width:"100%",
+        height:180,
+        border:'2px dashed #00ff88',
+        borderRadius:14,
+        display:'flex',
+        alignItems:'center',
+        justifyContent:'center',
+        textAlign:'center',
+        color:'#00ff88',
+        cursor:'pointer',
+        marginBottom:20,
+        background:'#020d07'
       }}>
-        📸 사진 촬영 또는 업로드
         <input
           type="file"
           accept="image/*"
           onChange={handleFile}
-          style={{ display: "none" }}
+          style={{display:"none"}}
         />
+
+        <div style={{fontSize:18}}>
+          📸 <br/>
+          <b>여기를 눌러</b><br/>
+          <span style={{color:"#ccc"}}>사진 촬영 또는 업로드</span>
+        </div>
+
       </label>
 
-      {/* 이미지 미리보기 -> 중앙 정렬 */}
+      {/* 🖼 이미지 미리보기 - 중앙 고정 */}
       {preview && (
+
         <div style={{
-          display: "flex",
-          justifyContent: "center",
-          marginBottom: 20,
+          display:'flex',
+          justifyContent:'center',
+          marginBottom:20
         }}>
+
           <img
             src={preview}
             style={{
-              maxWidth: 320,
-              width: "90%",
-              borderRadius: 12,
-              border: "2px solid #00ff88"
+              width:'90%',
+              maxWidth:320,
+              borderRadius:12,
+              border:'2px solid #00ff88',
+              objectFit:'contain'
             }}
           />
+
         </div>
       )}
 
-      {/* 진단 버튼 */}
+      {/* 🧠 진단 버튼 */}
       <button
         onClick={analyze}
         disabled={loading}
         style={{
-          width: "100%",
-          maxWidth: 340,
-          background: "#00cc44",
-          border: "none",
-          borderRadius: 12,
-          padding: "14px",
-          fontSize: 18,
-          cursor: "pointer"
+          width:'100%',
+          background:'#00cc44',
+          color:'#000',
+          padding:16,
+          borderRadius:14,
+          border:'none',
+          fontSize:18,
+          cursor:'pointer'
         }}
       >
-        🧠 {loading ? "진단 중..." : "AI 진단 요청"}
+        🧠 {loading ? "AI 진단중..." : "AI 진단 요청"}
       </button>
 
-      {/* 결과 박스 */}
-      {result && (
+      {/* ✅ 결과 박스 */}
+      { result && (
+
         <div style={{
-          background: "#111",
-          borderRadius: 12,
-          padding: 16,
-          marginTop: 20,
-          textAlign: "left",
-          color: "#00ff88"
+          background:'#111',
+          borderRadius:14,
+          padding:16,
+          marginTop:18
         }}>
-          {result.ok ? (
+          { result.ok ? (
+
             <>
-              <h3>✅ AI 진단 결과</h3>
+              <h3>✅ AI 병해 진단 결과</h3>
 
-              <p><b>🌱 작물</b> : {result.crop}</p>
-              <p><b>🦠 병명</b> : {result.diagnosis}</p>
+              <p><b>🌱 작물</b><br/>{result.crop}</p>
 
-              <p><b>📌 발생 원인</b><br />{result.reason}</p>
+              <p><b>🦠 의심 병해</b><br/>{result.diagnosis}</p>
 
-              <p><b>🛠 방제 방법</b><br />{result.solution}</p>
+              <p><b>📌 주요 증상</b><br/>{result.symptoms}</p>
 
-              <p style={{ color: "#ffaa00" }}>
-                <b>⚠ 주의사항</b><br />
-                {result.caution}
-              </p>
+              <p><b>🧬 발생 원인</b><br/>{result.reason}</p>
+
+              <p><b>🛠 방제 처방</b><br/>{result.solution}</p>
+
+              <p style={{color:"#ffb000"}}><b>⚠ 예방 관리</b><br/>{result.caution}</p>
             </>
-          ) : (
-            <>
-              <h3>❌ 분석 실패</h3>
-              <p>{result.error}</p>
-            </>
+          ):(
+
+            <h3>❌ 진단 실패 : {result.error}</h3>
+
           )}
+
         </div>
       )}
 
-      {/* 119 버튼 */}
+      {/* 🚨 119 버튼 */}
       <a
         href="https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform"
         target="_blank"
-        rel="noopener noreferrer"
       >
         <button style={{
-          width: "100%",
-          maxWidth: 340,
-          marginTop: 20,
-          background: "red",
-          border: "none",
-          borderRadius: 12,
-          padding: "14px",
-          color: "#fff",
-          fontSize: 18,
-          cursor: "pointer"
+          width:'100%',
+          marginTop:20,
+          background:'red',
+          color:'#fff',
+          padding:16,
+          border:'none',
+          borderRadius:14,
+          fontSize:18,
+          cursor:'pointer'
         }}>
-          🚨 119 출동 요청
+          🚨 119 긴급 출동 요청
         </button>
       </a>
 

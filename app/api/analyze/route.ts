@@ -1,54 +1,62 @@
 import { NextResponse } from "next/server";
 
-export async function POST(req: Request) {
-  try {
-    const form = await req.formData();
-    const file = form.get("file") as File;
+export async function POST(req:Request){
 
-    if (!file) {
+  try{
+
+    const data = await req.formData();
+    const file = data.get("file");
+
+    if(!file){
       return NextResponse.json({
-        ok: false,
-        error: "이미지 파일이 전달되지 않았습니다."
+        ok:false,
+        error:"사진 파일이 접수되지 않았습니다."
       });
     }
 
-    // ✅ 임시 AI 리포트 (실서비스 포맷)
+    // ✅ 전문가 리포트 고정 출력
     return NextResponse.json({
 
-      ok: true,
+      ok:true,
 
-      crop: "양파",
+      crop:"옥수수",
 
-      diagnosis: "노균병 초기 의심",
+      diagnosis:"멸강나방 · 나방류 피해 의심",
 
-      reason: `
-잎 표면에 회백색 반점이 퍼지며
-습한 환경에서 빠르게 확산되는 곰팡이성 병입니다.
-최근 강우 및 배수 불량, 통풍 부족 상황일 때
-집단 발병 사례가 증가합니다.
+      symptoms:`
+열매 상단 및 측면이 불규칙하게 파여 있음
+수액 흐른 흔적, 벌레 분변배설물 발견
+껍질 손상 부위가 갈변되며 상품가치 급락
 `,
 
-      solution: `
-① 감염 잎 즉시 제거
-② 배수 정비 + 환기 강화
-③ 등록약제 살포
-   - 디메토모르프계
-   - 만코제브 혼용 가능
-④ 7일 간격 2~3회 연속 방제
+      reason:`
+고온·다습 조건에서 나방 유충 급증
+알 부화 직후 열악지 또는 심부로 침투
+방제 적기를 놓치면 피해가 급속 확대됨
 `,
 
-      caution: `
-연작 시 재발 가능성 높아 윤작 권장
-살균제 동일 성분 연속 사용 금지
+      solution:`
+① BT제 또는 유충 전용 약제 살포 (7일 간격 반복)
+② 피해 과실 제거
+③ 유인등 및 페로몬 트랩 설치
+④ 발생 초기에 예방적 약제 살포 권장
+`,
+
+      caution:`
+동일 약제 연속 살포 금지
+살충제 저항성 관리 필수
+시설 및 주위 잡초 제거 철저
 `
+
     });
 
-  } catch (err) {
-    console.error(err);
+  }catch(err:any){
 
     return NextResponse.json({
-      ok: false,
-      error: "진단 서버 에러"
+      ok:false,
+      error:"AI 서버 처리 오류"
     });
+
   }
+
 }
