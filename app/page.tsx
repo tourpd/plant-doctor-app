@@ -16,6 +16,26 @@ export default function Page() {
     setError("");
   };
 
+  const extractText = (data: any): string => {
+    if (!data) return "";
+
+    // 1. 가장 흔한 구조
+    if (typeof data.output_text === "string") return data.output_text;
+
+    // 2. messages 기반 구조
+    const content = data?.output?.[0]?.content;
+    if (Array.isArray(content)) {
+      return content.map((c) => c.text).join("\n");
+    }
+
+    // 3. choices 구조 (혹시 예전 형식)
+    if (data?.choices?.[0]?.message?.content) {
+      return data.choices[0].message.content;
+    }
+
+    return "";
+  };
+
   const onSubmit = async () => {
     if (!file) {
       alert("사진을 먼저 업로드하세요.");
@@ -40,11 +60,16 @@ export default function Page() {
       }
 
       const data = await res.json();
+      console.log("✅ AI RAW RESPONSE:", data);
 
-      setResult(
-        data?.result ||
-          "AI 응답은 받았으나 결과 필드가 비어 있습니다."
-      );
+      const text = extractText(data);
+
+      if (!text) {
+        setResult("AI 응답은 왔지만 파싱되지 않았습니다.\n원본 응답을 콘솔에서 확인하세요.");
+      } else {
+        setResult(text);
+      }
+
     } catch (err) {
       console.error(err);
       setError("서버 통신 오류");
@@ -54,35 +79,30 @@ export default function Page() {
   };
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "#000",
-        color: "#ffffff",
-        padding: "24px",
-        textAlign: "center",
-      }}
-    >
-      <h1 style={{ color: "#7CFFAF", marginBottom: 20 }}>
+    <main style={{
+      minHeight: "100vh",
+      background: "#000",
+      color: "#fff",
+      padding: "24px",
+      textAlign: "center",
+    }}>
+      <h2 style={{ color: "#7CFFAF", marginBottom: 20 }}>
         🐞 또봉이 농사 상담 AI
-      </h1>
+      </h2>
 
-      {/* ✅ 업로드 영역 */}
-      <label
-        style={{
-          width: "100%",
-          maxWidth: 420,
-          height: 160,
-          margin: "0 auto",
-          border: "2px dashed #22ff88",
-          borderRadius: 12,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-          color: "#22ff88",
-        }}
-      >
+      <label style={{
+        width: "100%",
+        maxWidth: 420,
+        height: 160,
+        margin: "0 auto",
+        border: "2px dashed #22ff88",
+        borderRadius: 12,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        color: "#22ff88",
+      }}>
         <input
           type="file"
           accept="image/*"
@@ -91,11 +111,9 @@ export default function Page() {
             e.target.files && handleFile(e.target.files[0])
           }
         />
-
         📸 사진 촬영 또는 업로드
       </label>
 
-      {/* 미리보기 */}
       {preview && (
         <img
           src={preview}
@@ -105,11 +123,9 @@ export default function Page() {
             borderRadius: 12,
             border: "2px solid #22ff88",
           }}
-          alt="preview"
         />
       )}
 
-      {/* 진단 버튼 */}
       <button
         onClick={onSubmit}
         disabled={loading}
@@ -130,41 +146,34 @@ export default function Page() {
         🧠 AI 진단 요청
       </button>
 
-      {/* 에러 메시지 */}
       {error && (
-        <div
-          style={{
-            marginTop: 16,
-            padding: 12,
-            borderRadius: 10,
-            background: "#111",
-            color: "red",
-          }}
-        >
+        <div style={{
+          marginTop: 16,
+          padding: 12,
+          borderRadius: 10,
+          background: "#111",
+          color: "red",
+        }}>
           🚨 {error}
         </div>
       )}
 
-      {/* 결과 출력 */}
       {result && (
-        <pre
-          style={{
-            marginTop: 16,
-            padding: 16,
-            borderRadius: 12,
-            background: "#111",
-            color: "#22ff88",
-            textAlign: "left",
-            whiteSpace: "pre-wrap",
-          }}
-        >
+        <pre style={{
+          marginTop: 16,
+          padding: 16,
+          borderRadius: 12,
+          background: "#111",
+          color: "#22ff88",
+          textAlign: "left",
+          whiteSpace: "pre-wrap",
+        }}>
 ✅ AI 진단 결과
 
 {result}
         </pre>
       )}
 
-      {/* 119 버튼 */}
       <a
         href="https://www.appsheet.com/start/58068f53-8b94-4e26-9487-e65dc73261cb?view=%EB%86%8D%EA%B0%80%20%EC%A0%91%EC%88%98"
         target="_blank"
