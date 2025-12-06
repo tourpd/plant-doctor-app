@@ -8,19 +8,22 @@ export default function Home() {
   const [result, setResult] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
-  const handleFile = (f: File) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || !e.target.files[0]) return;
+    const f = e.target.files[0];
     setFile(f);
     setPreview(URL.createObjectURL(f));
     setResult("");
   };
 
   const analyze = async () => {
-    if (!file) return alert("사진을 먼저 선택해 주세요.");
-
-    setLoading(true);
+    if (!file) return alert("사진을 먼저 업로드하세요.");
 
     const form = new FormData();
     form.append("file", file);
+
+    setLoading(true);
+    setResult("");
 
     try {
       const res = await fetch("/api/analyze", {
@@ -30,128 +33,77 @@ export default function Home() {
 
       const data = await res.json();
 
-      if (!data.ok) {
-        setResult("⚠️ 오류: " + data.error);
+      if (data.ok) {
+        setResult(data.text || "결과 없음");
       } else {
-        setResult(data.text);
+        setResult("분석 오류: " + data.error);
       }
-    } catch (err) {
-      setResult("⚠️ 서버 통신 실패");
+    } catch {
+      setResult("서버 연결 오류");
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   return (
-    <main
-      style={{
-        background: "#000",
-        minHeight: "100vh",
-        padding: "30px",
-        color: "#00ff88",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-      }}
-    >
-      {/* TITLE */}
-      <h1 style={{ marginBottom: 20 }}>🐞 또봉이 농사 상담 AI</h1>
+    <main className="min-h-screen bg-black text-white flex flex-col items-center justify-start p-4 gap-4">
 
-      {/* UPLOAD BOX */}
-      <label
-        style={{
-          width: "100%",
-          maxWidth: 520,
-          height: 160,
-          border: "3px dashed #00ff88",
-          borderRadius: 16,
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center",
-          cursor: "pointer",
-          marginBottom: 24,
-        }}
-      >
-        📸 사진 촬영 또는 업로드
+      {/* Title */}
+      <h1 className="text-xl text-green-400 font-bold mt-2">
+        🐞 또봉이 농사 상담 AI
+      </h1>
+
+      {/* Upload box */}
+      <label className="w-full max-w-md border-2 border-dashed border-green-400 rounded-xl p-6 text-center cursor-pointer hover:bg-zinc-900 transition">
+        <div className="text-green-400">
+          📸 사진 촬영 또는 업로드
+        </div>
         <input
           type="file"
           accept="image/*"
-          style={{ display: "none" }}
-          onChange={(e) => e.target.files && handleFile(e.target.files[0])}
+          onChange={handleFileChange}
+          className="hidden"
         />
       </label>
 
-      {/* IMAGE CENTER */}
+      {/* 이미지 미리보기 */}
       {preview && (
         <img
           src={preview}
           alt="미리보기"
-          style={{
-            maxWidth: 380,
-            borderRadius: 20,
-            border: "3px solid #00ff88",
-            marginBottom: 20,
-          }}
+          className="max-w-md w-full rounded-xl border-2 border-green-400 object-contain mx-auto"
         />
       )}
 
-      {/* ANALYZE BUTTON */}
+      {/* 분석 버튼 */}
       <button
         onClick={analyze}
         disabled={loading}
-        style={{
-          background: "#12c94c",
-          color: "#000",
-          fontSize: 18,
-          padding: "16px 40px",
-          borderRadius: 12,
-          border: "none",
-          cursor: "pointer",
-          marginBottom: 24,
-        }}
+        className="bg-green-500 hover:bg-green-600 w-full max-w-md rounded-xl py-4 text-lg text-black font-bold transition"
       >
-        🧠 AI 진단 요청
+        {loading ? "분석중..." : "🧠 AI 진단 요청"}
       </button>
 
-      {/* RESULT BOX */}
+      {/* 결과 출력 박스 */}
       {result && (
-        <div
-          style={{
-            width: "100%",
-            maxWidth: 640,
-            background: "#111",
-            padding: 20,
-            borderRadius: 14,
-            lineHeight: 1.7,
-            whiteSpace: "pre-wrap",
-            marginBottom: 24,
-            border: "2px solid #00ff88",
-          }}
-        >
-          ✅ AI 진단 결과
+        <div className="w-full max-w-3xl bg-zinc-900 border border-green-400 p-4 rounded-xl text-green-300 whitespace-pre-line leading-relaxed">
+          ✅ AI 병해 진단 결과
 
-{result}
+          {"\n\n"}
+
+          {result}
         </div>
       )}
 
-      {/* 119 LINK */}
+      {/* 119 버튼 */}
       <a
         href="https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform"
         target="_blank"
-        rel="noopener noreferrer"
-        style={{
-          background: "#ff1e1e",
-          padding: "18px 50px",
-          borderRadius: 16,
-          color: "#fff",
-          fontWeight: "bold",
-          textDecoration: "none",
-          fontSize: 18,
-        }}
+        className="mt-4 bg-red-600 hover:bg-red-700 w-full max-w-md rounded-xl py-4 text-lg font-bold text-white text-center"
       >
         🚨 119 긴급 출동 요청
       </a>
+
     </main>
   );
 }
