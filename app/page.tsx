@@ -2,153 +2,175 @@
 
 import { useState } from "react";
 
-export default function Home() {
-
+export default function HomePage() {
   const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState("");
+  const [preview, setPreview] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
 
-  const handleUpload = (e: any) => {
-    const f = e.target.files[0];
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
     if (!f) return;
 
     setFile(f);
-    setPreview(URL.createObjectURL(f));
+    setResult(null);
+
+    const reader = new FileReader();
+    reader.onload = () => setPreview(reader.result as string);
+    reader.readAsDataURL(f);
   };
 
   const analyze = async () => {
     if (!file) {
-      alert("사진을 먼저 올려주세요");
+      alert("사진을 먼저 선택해주세요");
       return;
     }
 
-    const fd = new FormData();
-    fd.append("file", file);
+    try {
+      setLoading(true);
 
-    const res = await fetch("/api/analyze", {
-      method: "POST",
-      body: fd,
-    });
+      const form = new FormData();
+      form.append("file", file);
 
-    const data = await res.json();
-    setResult(data);
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        body: form,
+      });
+
+      const data = await res.json();
+      setResult(data);
+    } catch (e) {
+      console.error(e);
+      alert("서버 통신 오류");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-
     <main style={{
-      background:"#000",
-      minHeight:"100vh",
-      padding:20,
-      color:"#6BFFD4"
+      minHeight: "100vh",
+      background: "#000",
+      color: "#00ff88",
+      padding: 20,
+      textAlign: "center"
     }}>
 
-      <h2 style={{ textAlign:"center" }}>
+      <h2 style={{ marginBottom: 20 }}>
         🐞 또봉이 농사 상담 AI
       </h2>
 
-      {/* 업로드 박스 */}
-      <div style={{
-        border:"2px dashed #00ff88",
-        borderRadius:10,
-        padding:20,
-        textAlign:"center",
-        marginBottom:20
+      {/* 업로드 영역 */}
+      <label style={{
+        display: "block",
+        border: "2px dashed #00ff88",
+        borderRadius: 12,
+        padding: "40px 10px",
+        marginBottom: 20,
+        cursor: "pointer"
       }}>
-        📸 사진 촬영 또는 업로드 <br/>
+        📸 사진 촬영 또는 업로드
         <input
           type="file"
           accept="image/*"
-          onChange={handleUpload}
+          onChange={handleFile}
+          style={{ display: "none" }}
         />
-      </div>
+      </label>
 
-      {/* 미리보기 */}
+      {/* 이미지 미리보기 -> 중앙 정렬 */}
       {preview && (
-        <div style={{ textAlign:"center", marginBottom:20 }}>
+        <div style={{
+          display: "flex",
+          justifyContent: "center",
+          marginBottom: 20,
+        }}>
           <img
             src={preview}
             style={{
-              maxWidth:280,
-              borderRadius:10,
-              border:"2px solid #00ff88"
+              maxWidth: 320,
+              width: "90%",
+              borderRadius: 12,
+              border: "2px solid #00ff88"
             }}
           />
         </div>
       )}
 
       {/* 진단 버튼 */}
-      <div style={{ textAlign:"center", marginBottom:20 }}>
-        <button
-          onClick={analyze}
-          style={{
-            background:"#00cc44",
-            color:"white",
-            padding:"12px 40px",
-            borderRadius:8,
-            border:0,
-            fontSize:18,
-            cursor:"pointer"
-          }}
-        >
-          🧠 AI 진단 요청
-        </button>
-      </div>
+      <button
+        onClick={analyze}
+        disabled={loading}
+        style={{
+          width: "100%",
+          maxWidth: 340,
+          background: "#00cc44",
+          border: "none",
+          borderRadius: 12,
+          padding: "14px",
+          fontSize: 18,
+          cursor: "pointer"
+        }}
+      >
+        🧠 {loading ? "진단 중..." : "AI 진단 요청"}
+      </button>
 
       {/* 결과 박스 */}
-      <div style={{
-        background:"#111",
-        borderRadius:8,
-        padding:15,
-        minHeight:80
-      }}>
-        { result && (
-
-          result.ok ? (
+      {result && (
+        <div style={{
+          background: "#111",
+          borderRadius: 12,
+          padding: 16,
+          marginTop: 20,
+          textAlign: "left",
+          color: "#00ff88"
+        }}>
+          {result.ok ? (
             <>
-              ✅ AI 진단 완료
+              <h3>✅ AI 진단 결과</h3>
 
-              <pre style={{ whiteSpace:"pre-wrap" }}>
-작물 : {result.crop}
+              <p><b>🌱 작물</b> : {result.crop}</p>
+              <p><b>🦠 병명</b> : {result.diagnosis}</p>
 
-병명 : {result.diagnosis}
+              <p><b>📌 발생 원인</b><br />{result.reason}</p>
 
-원인 :
-{result.reason}
+              <p><b>🛠 방제 방법</b><br />{result.solution}</p>
 
-방제 방법 :
-{result.solution}
-              </pre>
+              <p style={{ color: "#ffaa00" }}>
+                <b>⚠ 주의사항</b><br />
+                {result.caution}
+              </p>
             </>
           ) : (
-
-            <pre>
-{JSON.stringify(result,null,2)}
-            </pre>
-
-          )
-        )}
-      </div>
+            <>
+              <h3>❌ 분석 실패</h3>
+              <p>{result.error}</p>
+            </>
+          )}
+        </div>
+      )}
 
       {/* 119 버튼 */}
-      <div style={{ textAlign:"center", marginTop:20 }}>
-        <a
-          href="https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            display:"inline-block",
-            background:"red",
-            color:"white",
-            padding:"14px 40px",
-            borderRadius:8,
-            textDecoration:"none",
-            fontSize:18
-          }}
-        >
+      <a
+        href="https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <button style={{
+          width: "100%",
+          maxWidth: 340,
+          marginTop: 20,
+          background: "red",
+          border: "none",
+          borderRadius: 12,
+          padding: "14px",
+          color: "#fff",
+          fontSize: 18,
+          cursor: "pointer"
+        }}>
           🚨 119 출동 요청
-        </a>
-      </div>
+        </button>
+      </a>
 
     </main>
   );
