@@ -1,7 +1,6 @@
-import { NextResponse } from "next/server";
-import OpenAI from "openai";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
     const file = form.get("file") as File | null;
@@ -13,45 +12,21 @@ export async function POST(req: Request) {
       });
     }
 
-    // 파일 -> base64 변환
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const imageBase64 = buffer.toString("base64");
-
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-
-    const response = await openai.responses.create({
-      model: "gpt-4o-mini",
-      input: [
-        {
-          role: "user",
-          content: [
-            { type: "input_text", text: "이 농작물 사진을 보고 병해충 진단을 해줘. 작물명, 병명, 원인, 대응법을 자세히 설명해줘." },
-            {
-              type: "input_image",
-              image_base64: imageBase64,
-            },
-          ],
-        },
-      ],
-      max_output_tokens: 700,
-    });
-
-    const result =
-      response.output_text ||
-      "AI 분석 결과를 생성하지 못했습니다.";
+    // 실제 AI 분석은 나중에 연결
+    // 지금은 테스트용 더미 결과 반환
 
     return NextResponse.json({
       ok: true,
-      result,
+      crop: "양파",
+      diagnosis: "노균병 의심",
+      reason: "잎 표면의 회색 반점과 병반 확산",
+      solution:
+        "배수 개선, 감염주 제거, 등록 약제(만코제브, 디메토모르프) 7일 간격 살포",
     });
-  } catch (err: any) {
-    console.error("AI error:", err);
-
+  } catch (e) {
     return NextResponse.json({
       ok: false,
-      error: err.message || "AI 분석 실패",
+      error: "서버 분석 중 오류가 발생했습니다.",
     });
   }
 }
