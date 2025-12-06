@@ -1,53 +1,62 @@
 import OpenAI from "openai";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
+export const runtime = "nodejs";
 
-export async function POST(req: Request) {
+console.log("API_KEY_EXISTS:", !!process.env.OPENAI_API_KEY);
+
+export async function POST(req: NextRequest) {
   try {
-    const { imageUrl, text } = await req.json();
+    console.log("API_KEY_VALUE_PREFIX:", process.env.OPENAI_API_KEY?.slice(0, 8));
 
-    if (!imageUrl) {
+    if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
-        { error: "No image provided" },
+        { error: "OPENAI_API_KEY is missing on server" },
+        { status: 500 }
+      );
+    }
+
+    const formData = await req.formData();
+    const file = formData.get("image") as File | null;
+
+    if (!file) {
+      return NextResponse.json(
+        { error: "No image file received" },
         { status: 400 }
       );
     }
 
-    const response = await client.responses.create({
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const base64Image = buffer.toString("base64");
+    const imageUrl = `data:image/jpeg;base64,${base64Image}`;
+
+    const client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
+    const result = await client.responses.create({
       model: "gpt-4.1-mini",
       input: [
         {
           role: "user",
           content: [
-            {
-              type: "input_text",
-              text: text || "이 작물 상태를 진단해주세요",
-            },
+            { type: "input_text", text: "작물 병해인지 분석해 주세요." },
             {
               type: "input_image",
               image_url: imageUrl,
-              detail: "high",
+              detail: "auto"
             },
           ],
         },
       ],
     });
 
-    const result =
-      response.output_text ||
-      JSON.stringify(response.output, null, 2);
+    return NextResponse.json(result);
 
-    return NextResponse.json({
-      success: true,
-      result,
-    });
-  } catch (err) {
-    console.error("Diagnose error:", err);
+  } catch (err: any) {
+    console.error("DIAGNOSE_API_ERROR:", err);
     return NextResponse.json(
-      { error: "Diagnosis failed" },
+      { error: err?.message || "Unknown Server Error" },
       { status: 500 }
     );
   }
