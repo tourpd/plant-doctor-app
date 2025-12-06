@@ -24,28 +24,34 @@ export async function POST(req: Request) {
       apiKey: process.env.OPENAI_API_KEY!,
     });
 
-    const response = await client.responses.create({
+    const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
-      input: [
+      messages: [
+        {
+          role: "system",
+          content: "당신은 농작물 병해 진단 전문가입니다."
+        },
         {
           role: "user",
           content: [
-            { type: "input_text", text: "사진 속 작물의 병해 증상을 분석하고 조치 방법을 알려주세요." },
             {
-              type: "input_image",
-              image_base64: base64,
+              type: "text",
+              text: "사진 속 작물의 병해 증상을 분석하고 조치 방법을 알려주세요."
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:image/jpeg;base64,${base64}`
+              }
             }
           ]
         }
       ]
     });
 
-    const result =
-      response.output_text || JSON.stringify(response.output, null, 2);
-
     return NextResponse.json({
       success: true,
-      result
+      result: completion.choices[0].message.content
     });
 
   } catch (err) {
@@ -56,3 +62,4 @@ export async function POST(req: Request) {
     );
   }
 }
+
