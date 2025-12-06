@@ -1,62 +1,62 @@
+import { NextResponse } from "next/server";
 import OpenAI from "openai";
-import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "nodejs";
+/**
+ * 🔍 Diagnostic
+ * 운영 서버에서 실제로 OPENAI_API_KEY 가 읽히는지 확인용 로그
+ */
+console.log(
+  "✅ OPENAI_API_KEY LENGTH:",
+  process.env.OPENAI_API_KEY
+    ? process.env.OPENAI_API_KEY.length
+    : "❌ UNDEFINED"
+);
 
-console.log("API_KEY_EXISTS:", !!process.env.OPENAI_API_KEY);
-
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    console.log("API_KEY_VALUE_PREFIX:", process.env.OPENAI_API_KEY?.slice(0, 8));
-
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json(
-        { error: "OPENAI_API_KEY is missing on server" },
-        { status: 500 }
-      );
-    }
-
     const formData = await req.formData();
-    const file = formData.get("image") as File | null;
+    const file = formData.get("image") as File;
 
     if (!file) {
-      return NextResponse.json(
-        { error: "No image file received" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "이미지가 없습니다." }, { status: 400 });
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const base64Image = buffer.toString("base64");
-    const imageUrl = `data:image/jpeg;base64,${base64Image}`;
+    const base64 = buffer.toString("base64");
 
-    const client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY!,
     });
 
-    const result = await client.responses.create({
-      model: "gpt-4.1-mini",
-      input: [
+    const result = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "당신은 농작물 병해 진단 전문가입니다."
+        },
         {
           role: "user",
           content: [
-            { type: "input_text", text: "작물 병해인지 분석해 주세요." },
+            { type: "text", text: "이 농작물 사진의 병해 증상을 분석하고 조치방법을 알려주세요." },
             {
-              type: "input_image",
-              image_url: imageUrl,
-              detail: "auto"
-            },
-          ],
-        },
-      ],
+              type: "image_url",
+              image_url: { url: `data:image/jpeg;base64,${base64}` }
+            }
+          ]
+        }
+      ]
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      success: true,
+      result: result.choices[0].message.content,
+    });
 
-  } catch (err: any) {
-    console.error("DIAGNOSE_API_ERROR:", err);
+  } catch (err) {
+    console.error("❌ DIAGNOSE ERROR:", err);
     return NextResponse.json(
-      { error: err?.message || "Unknown Server Error" },
+      { success: false, error: String(err) },
       { status: 500 }
     );
   }
