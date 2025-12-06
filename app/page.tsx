@@ -1,105 +1,70 @@
 "use client";
 
 import { useState } from "react";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "../lib/firebase";
 
 export default function Home() {
-  const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [image, setImage] = useState<File | null>(null);
+  const [result, setResult] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
 
-  const uploadImage = async () => {
-    if (!file) return alert("사진을 선택하세요.");
-
-    setLoading(true);
+  const handleDiagnose = async () => {
+    if (!image) {
+      alert("사진을 먼저 선택해 주세요.");
+      return;
+    }
 
     try {
-      // ==========================
-      // 1. Firebase Storage 업로드
-      // ==========================
-      const path = `photos/${Date.now()}_${file.name}`;
-      const fileRef = ref(storage, path);
+      setLoading(true);
+      setResult("");
 
-      await uploadBytes(fileRef, file);
+      const formData = new FormData();
+      formData.append("image", image);
 
-      const imageUrl = await getDownloadURL(fileRef);
-
-      console.log("✅ 이미지 URL:", imageUrl);
-
-      // ==========================
-      // 2. OpenAI Vision 진단
-      // ==========================
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      const res = await fetch("/api/analyze", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${
-            process.env.NEXT_PUBLIC_OPENAI_API_KEY
-          }`,
-        },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "system",
-              content:
-                "당신은 농업 병해충 진단 전문가입니다. 사진을 보고 병명, 증상 원인, 대처 방법, 권장 약제를 알려주세요."
-            },
-            {
-              role: "user",
-              content: [
-                { type: "text", text: "이 작물 병해를 진단해주세요." },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: imageUrl
-                  }
-                }
-              ]
-            }
-          ],
-          max_tokens: 600
-        })
+        body: formData
       });
 
       const data = await res.json();
-      console.log("AI:", data);
 
-      setResult(data.choices?.[0]?.message?.content || "진단 실패");
+      if (!res.ok) {
+        console.error("API ERROR:", data);
+        setResult("AI 진단 실패: " + (data.error || res.statusText));
+        return;
+      }
+
+      setResult(data.result || "진단 결과 없음");
 
     } catch (err) {
-      console.error("Error:", err);
-      setResult("업로드 혹은 AI 분석 중 오류 발생");
+      console.error("REQUEST ERROR:", err);
+      setResult("AI 호출 중 오류 발생");
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   return (
-    <main style={{ padding: 40, maxWidth: 700, margin: "auto" }}>
-      <h2>🐼 또봉이 병해 사진 진단</h2>
-      <p>작물 병해가 의심될 때 사진을 보내면 AI가 분석합니다.</p>
+    <main style={{ padding: 20 }}>
+      <h2>🐛 또봉이 병해 사진 진단</h2>
 
       <input
         type="file"
         accept="image/*"
-        onChange={(e) => setFile(e.target.files?.[0] || null)}
+        onChange={(e) => setImage(e.target.files?.[0] || null)}
       />
 
-      <p>
-        {file ? `📷 선택됨: ${file.name}` : "❌ 파일 선택 없음"}
-      </p>
+      <br />
+      <br />
 
       <button
-        onClick={uploadImage}
+        onClick={handleDiagnose}
         disabled={loading}
         style={{
-          padding: "12px 20px",
-          background: "red",
+          padding: "10px 18px",
+          background: "#e11",
           color: "white",
           border: "none",
-          borderRadius: 8,
+          borderRadius: 6,
           cursor: "pointer"
         }}
       >
@@ -109,14 +74,15 @@ export default function Home() {
       {result && (
         <pre
           style={{
-            marginTop: 30,
-            padding: 15,
+            whiteSpace: "pre-wrap",
             background: "#111",
             color: "#0f0",
-            whiteSpace: "pre-wrap"
+            padding: 15,
+            marginTop: 20,
+            borderRadius: 6
           }}
         >
-          ✅ AI 진단 결과
+✅ AI 진단 결과
 
 {result}
         </pre>
