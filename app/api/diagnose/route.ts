@@ -1,29 +1,20 @@
-import OpenAI from "openai";
 import { NextRequest, NextResponse } from "next/server";
-
-export const runtime = "nodejs";
-
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
+import OpenAI from "openai";
 
 export async function POST(req: NextRequest) {
   try {
-    const form = await req.formData();
-    const file = form.get("image") as File | null;
+    const { imageBase64 } = await req.json();
 
-    if (!file) {
+    if (!imageBase64) {
       return NextResponse.json(
-        { error: "No image uploaded" },
+        { error: "No image data provided" },
         { status: 400 }
       );
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const base64 = buffer.toString("base64");
-    const mime = file.type || "image/jpeg";
-
-    const imageDataUrl = `data:${mime};base64,${base64}`;
+    const client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY!,
+    });
 
     const response = await client.responses.create({
       model: "gpt-4.1-mini",
@@ -33,29 +24,26 @@ export async function POST(req: NextRequest) {
           content: [
             {
               type: "input_text",
-              text: "이 작물 병해를 진단해 주세요."
+              text: "이 작물의 상태를 진단하고 병해/영양/생리 문제 여부와 조치 방법을 알려줘."
             },
             {
               type: "input_image",
-              image_url: imageDataUrl
+              image_url: imageBase64,
+              detail: "auto"   // ✅ 이 한 줄이 현재 막힌 100% 원인
             }
-          ]
-        }
-      ]
+          ],
+        },
+      ],
     });
 
     return NextResponse.json({
-      success: true,
-      result:
-        response.output_text ||
-        response.output?.[0]?.content?.[0]?.text ||
-        "결과를 생성하지 못했습니다."
+      result: response.output_text,
     });
 
   } catch (err: any) {
-    console.error("DIAGNOSE ERROR:", err);
+    console.error("Diagnose API error", err);
     return NextResponse.json(
-      { error: err?.message || "Internal error" },
+      { error: err.message || "Diagnose API failed" },
       { status: 500 }
     );
   }
