@@ -1,162 +1,57 @@
-"use client";
+import { NextRequest, NextResponse } from "next/server";
+import OpenAI from "openai";
 
-import { useState } from "react";
+export const runtime = "nodejs";
 
-export default function Page() {
-  const [file, setFile] = useState<File|null>(null);
-  const [preview, setPreview] = useState<string|null>(null);
+export async function POST(req: NextRequest) {
+  try {
 
-  const [loading,setLoading]=useState(false);
-  const [result,setResult]=useState<any>(null);
-  const [error,setError]=useState("");
+    // ✅ multipart 정상 파싱
+    const form = await req.formData();
+    const file = form.get("file") as File | null;
 
-  const onFile=(f:File)=>{
-    setFile(f);
-    setPreview(URL.createObjectURL(f));
-    setResult(null);
-    setError("");
-  };
-
-  const diagnose=async()=>{
-    if(!file) return alert("사진 먼저 업로드 해주세요.");
-
-    try{
-      setLoading(true);
-      setError("");
-      setResult(null);
-
-      const form=new FormData();
-      form.append("file",file);
-
-      const res= await fetch("/api/analyze",{
-        method:"POST",
-        body:form
+    if (!file) {
+      return NextResponse.json({
+        ok:false,
+        error:"이미지 파일 전달 실패"
       });
-
-      const data= await res.json();
-      console.log("AI FULL RESPONSE",data);
-
-      setResult(data);
-
-    }catch(e){
-      console.error(e);
-      setError("🚨 서버 통신 실패");
     }
-    finally{
-      setLoading(false);
-    }
-  };
 
-  return(
-    <main style={{
-      minHeight:"100vh",
-      background:"#000",
-      padding:24,
-      display:"flex",
-      flexDirection:"column",
-      alignItems:"center"
-    }}>
+    // ✅ 이미지 -> base64 변환
+    const buf = Buffer.from(await file.arrayBuffer());
+    const base64 = buf.toString("base64");
 
-      <h2 style={{color:"#7CFFAF"}}>🐞 또봉이 농사 상담 AI</h2>
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
 
-      {/* 파일 업로드 */}
-      <label style={{
-        width:"100%",
-        maxWidth:430,
-        height:160,
-        border:"2px dashed #00ff88",
-        borderRadius:12,
-        display:"flex",
-        alignItems:"center",
-        justifyContent:"center",
-        color:"#00ff88",
-        cursor:"pointer"
-      }}>
-        <input hidden type="file" accept="image/*"
-          onChange={e=> e.target.files && onFile(e.target.files[0])}
-        />
-        📸 사진 촬영 또는 업로드
-      </label>
-
-
-      {/* 미리보기 */}
-      {preview &&
-        <div style={{
-          width:"100%",
-          display:"flex",
-          justifyContent:"center"
-        }}>
-          <img src={preview} style={{
-            width:280,
-            borderRadius:12,
-            border:"2px solid #00ff88",
-            margin:"12px auto"
-          }} />
-        </div>
-      }
-
-      <button
-        onClick={diagnose}
-        disabled={loading}
-        style={{
-          width:"100%",
-          maxWidth:430,
-          background:"#00c853",
-          padding:14,
-          borderRadius:12,
-          border:"none",
-          fontSize:18,
-          fontWeight:"bold",
-          cursor:"pointer"
-        }}
-      >
-        🧠 AI 진단 요청
-      </button>
-
-      {/* 결과 박스 (항상 표시) */}
-      <div style={{
-        background:"#111",
-        marginTop:16,
-        padding:16,
-        width:"100%",
-        maxWidth:430,
-        borderRadius:12,
-        color:"#00ff88",
-        whiteSpace:"pre-wrap",
-        minHeight:120
-      }}>
-        {loading && "🔄 AI 진단 중입니다..."}
-        {error && error}
-        {!loading && result &&
-          JSON.stringify(result,null,2)
+    // ✅ Vision 호출
+    const response = await openai.responses.create({
+      model:"gpt-4.1-mini",
+      input:[
+        {
+          role:"user",
+          content:[
+            { type:"input_text", text:"이 농작물 상태를 분석해서 병명, 원인, 방제법을 알려줘." },
+            {
+              type:"input_image",
+              image_base64: base64
+            }
+          ]
         }
-        {!loading && !result && !error &&
-          "✅ 대기 중: 사진 업로드 후 진단 요청을 눌러주세요."
-        }
-      </div>
+      ],
+      max_output_tokens:500
+    });
 
-      {/* 119 연결 */}
-      <a
-        href="https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform"
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{
-          marginTop:24,
-          width:"100%",
-          maxWidth:430,
-          textAlign:"center",
-          padding:14,
-          background:"#ff1a1a",
-          color:"#fff",
-          fontWeight:"bold",
-          borderRadius:12,
-          textDecoration:"none",
-          fontSize:17
-        }}
-      >
-        🚨 119 출동 요청
-      </a>
+    // ✅ 정상 리턴
+    return NextResponse.json(response);
 
-    </main>
-  );
+  } catch (err) {
+    console.error("ANALYZE API ERROR:", err);
+
+    return NextResponse.json({
+      ok:false,
+      error:"서버 처리 중 오류 발생"
+    });
+  }
 }
