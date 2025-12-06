@@ -1,20 +1,20 @@
-import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import { NextResponse } from "next/server";
 
-export async function POST(req: NextRequest) {
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+});
+
+export async function POST(req: Request) {
   try {
-    const { imageBase64 } = await req.json();
+    const { imageUrl, text } = await req.json();
 
-    if (!imageBase64) {
+    if (!imageUrl) {
       return NextResponse.json(
-        { error: "No image data provided" },
+        { error: "No image provided" },
         { status: 400 }
       );
     }
-
-    const client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY!,
-    });
 
     const response = await client.responses.create({
       model: "gpt-4.1-mini",
@@ -24,26 +24,30 @@ export async function POST(req: NextRequest) {
           content: [
             {
               type: "input_text",
-              text: "이 작물의 상태를 진단하고 병해/영양/생리 문제 여부와 조치 방법을 알려줘."
+              text: text || "이 작물 상태를 진단해주세요",
             },
             {
               type: "input_image",
-              image_url: imageBase64,
-              detail: "auto"   // ✅ 이 한 줄이 현재 막힌 100% 원인
-            }
+              image_url: imageUrl,
+              detail: "high",
+            },
           ],
         },
       ],
     });
 
-    return NextResponse.json({
-      result: response.output_text,
-    });
+    const result =
+      response.output_text ||
+      JSON.stringify(response.output, null, 2);
 
-  } catch (err: any) {
-    console.error("Diagnose API error", err);
+    return NextResponse.json({
+      success: true,
+      result,
+    });
+  } catch (err) {
+    console.error("Diagnose error:", err);
     return NextResponse.json(
-      { error: err.message || "Diagnose API failed" },
+      { error: "Diagnosis failed" },
       { status: 500 }
     );
   }
