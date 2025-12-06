@@ -3,90 +3,52 @@
 import { useState } from "react";
 
 export default function Home() {
-  const [image, setImage] = useState<File | null>(null);
-  const [result, setResult] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(false);
-
-  const handleDiagnose = async () => {
-    if (!image) {
-      alert("사진을 먼저 선택해 주세요.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setResult("");
-
-      const formData = new FormData();
-      formData.append("image", image);
-
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        body: formData
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        console.error("API ERROR:", data);
-        setResult("AI 진단 실패: " + (data.error || res.statusText));
-        return;
-      }
-
-      setResult(data.result || "진단 결과 없음");
-
-    } catch (err) {
-      console.error("REQUEST ERROR:", err);
-      setResult("AI 호출 중 오류 발생");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [result] = useState(
+    "✅ AI 진단 테스트 화면입니다.\n사진 업로드 후 진단 결과가 여기에 출력됩니다."
+  );
 
   return (
-    <main style={{ padding: 20 }}>
-      <h2>🐛 또봉이 병해 사진 진단</h2>
+    <main style={{ padding: 40 }}>
 
-      <input
-        type="file"
-        accept="image/*"
-        onChange={(e) => setImage(e.target.files?.[0] || null)}
-      />
+      <h2>🪴 또봉이 병해 사진 진단</h2>
 
-      <br />
-      <br />
+      <p style={{ marginTop: 10 }}>작물 병해가 의심될 때 사진을 보내면 AI가 분석합니다.</p>
 
-      <button
-        onClick={handleDiagnose}
-        disabled={loading}
+      <pre
         style={{
-          padding: "10px 18px",
-          background: "#e11",
-          color: "white",
-          border: "none",
+          background: "#111",
+          color: "#00ff00",
+          padding: "12px",
+          marginTop: 20,
           borderRadius: 6,
-          cursor: "pointer"
+          whiteSpace: "pre-wrap"
         }}
       >
-        {loading ? "진단 중..." : "진단 요청 보내기"}
-      </button>
+        ✅ AI 진단 결과
+{"\n\n"}
+        {result}
+      </pre>
 
-      {result && (
-        <pre
-          style={{
-            whiteSpace: "pre-wrap",
-            background: "#111",
-            color: "#0f0",
-            padding: 15,
-            marginTop: 20,
-            borderRadius: 6
-          }}
-        >
-✅ AI 진단 결과
+      {/* 🆘 119 농가 긴급 상담 버튼 */}
+      <a
+        href="https://www.appsheet.com/start/58068f53-8b94-4e26-9487-e65dc73261cb?view=%EB%86%8D%EA%B0%80%20%EC%A0%91%EC%88%98"
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          display: "inline-block",
+          marginTop: 30,
+          background: "#0066ff",
+          color: "white",
+          padding: "14px 22px",
+          borderRadius: 8,
+          textDecoration: "none",
+          fontWeight: "bold",
+          fontSize: 16,
+        }}
+      >
+        🚨 119 긴급 상담 요청
+      </a>
 
-{result}
-        </pre>
-      )}
     </main>
   );
 }
