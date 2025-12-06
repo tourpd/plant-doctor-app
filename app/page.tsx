@@ -5,40 +5,44 @@ import { useState } from "react";
 export default function Page() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [result, setResult] = useState<string>("");
+  const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleFile = (f: File) => {
+  const onFileChange = (f: File) => {
     setFile(f);
     setPreview(URL.createObjectURL(f));
     setResult("");
     setError("");
   };
 
+  // ✅ 모든 응답 패턴 커버
   const extractText = (data: any): string => {
     if (!data) return "";
 
-    // 1. 가장 흔한 구조
     if (typeof data.output_text === "string") return data.output_text;
 
-    // 2. messages 기반 구조
-    const content = data?.output?.[0]?.content;
-    if (Array.isArray(content)) {
-      return content.map((c) => c.text).join("\n");
+    if (Array.isArray(data.output)) {
+      let t = "";
+      data.output.forEach((o: any) => {
+        if (Array.isArray(o.content)) {
+          o.content.forEach((c: any) => {
+            if (typeof c.text === "string") t += c.text + "\n";
+          });
+        }
+      });
+      return t;
     }
 
-    // 3. choices 구조 (혹시 예전 형식)
-    if (data?.choices?.[0]?.message?.content) {
+    if (data.choices?.[0]?.message?.content)
       return data.choices[0].message.content;
-    }
 
-    return "";
+    return JSON.stringify(data, null, 2);
   };
 
-  const onSubmit = async () => {
+  const diagnose = async () => {
     if (!file) {
-      alert("사진을 먼저 업로드하세요.");
+      alert("사진을 먼저 올려주세요.");
       return;
     }
 
@@ -55,24 +59,18 @@ export default function Page() {
         body: form,
       });
 
-      if (!res.ok) {
-        throw new Error(`서버 오류 (${res.status})`);
-      }
+      if (!res.ok) throw new Error("서버 통신 실패");
 
       const data = await res.json();
-      console.log("✅ AI RAW RESPONSE:", data);
+      console.log("AI RAW RESPONSE:", data);
 
       const text = extractText(data);
 
-      if (!text) {
-        setResult("AI 응답은 왔지만 파싱되지 않았습니다.\n원본 응답을 콘솔에서 확인하세요.");
-      } else {
-        setResult(text);
-      }
+      setResult(text || "✅ AI 분석 완료됐으나 텍스트 변환 실패");
 
     } catch (err) {
       console.error(err);
-      setError("서버 통신 오류");
+      setError("🚨 서버 통신 오류 발생");
     } finally {
       setLoading(false);
     }
@@ -82,118 +80,132 @@ export default function Page() {
     <main style={{
       minHeight: "100vh",
       background: "#000",
-      color: "#fff",
+      color: "#7CFFAF",
       padding: "24px",
-      textAlign: "center",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center"
     }}>
-      <h2 style={{ color: "#7CFFAF", marginBottom: 20 }}>
-        🐞 또봉이 농사 상담 AI
-      </h2>
 
+      <h2 style={{ marginBottom: 10 }}>🐞 또봉이 농사 상담 AI</h2>
+
+      {/* 업로드 영역 */}
       <label style={{
         width: "100%",
         maxWidth: 420,
         height: 160,
-        margin: "0 auto",
-        border: "2px dashed #22ff88",
+        border: "2px dashed #00ff88",
         borderRadius: 12,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         cursor: "pointer",
-        color: "#22ff88",
+        marginBottom: 12
       }}>
         <input
+          hidden
           type="file"
           accept="image/*"
-          hidden
-          onChange={(e) =>
-            e.target.files && handleFile(e.target.files[0])
-          }
+          onChange={(e) => e.target.files && onFileChange(e.target.files[0])}
         />
         📸 사진 촬영 또는 업로드
       </label>
 
-      {preview && (
-        <img
-          src={preview}
-          style={{
-            width: 260,
-            marginTop: 16,
-            borderRadius: 12,
-            border: "2px solid #22ff88",
-          }}
-        />
-      )}
+      {/* ✅ 사진 중앙 정렬 */}
+      {preview &&
+        <div style={{
+          display: "flex",
+          justifyContent: "center",
+          width: "100%"
+        }}>
+          <img
+            src={preview}
+            style={{
+              width: 280,
+              margin: "10px auto",
+              borderRadius: 12,
+              border: "2px solid #00ff88"
+            }}
+          />
+        </div>
+      }
 
+      {/* AI 버튼 */}
       <button
-        onClick={onSubmit}
+        onClick={diagnose}
         disabled={loading}
         style={{
           width: "100%",
           maxWidth: 420,
-          marginTop: 20,
-          padding: "14px",
           background: "#00c853",
-          border: "none",
-          borderRadius: 10,
           color: "#000",
+          padding: 14,
+          borderRadius: 12,
+          border: "none",
           fontSize: 18,
           fontWeight: "bold",
           cursor: "pointer",
-        }}
-      >
+          marginTop: 8
+        }}>
         🧠 AI 진단 요청
       </button>
 
-      {error && (
+      {/* 에러 */}
+      {error &&
         <div style={{
-          marginTop: 16,
-          padding: 12,
-          borderRadius: 10,
           background: "#111",
-          color: "red",
+          borderRadius: 12,
+          padding: 12,
+          width: "100%",
+          maxWidth: 420,
+          color: "#ff4444",
+          marginTop: 12
         }}>
-          🚨 {error}
+          {error}
         </div>
-      )}
+      }
 
-      {result && (
+      {/* ✅ 진단 결과 출력 */}
+      {result &&
         <pre style={{
-          marginTop: 16,
+          background: "#111",
+          marginTop: 12,
           padding: 16,
           borderRadius: 12,
-          background: "#111",
-          color: "#22ff88",
-          textAlign: "left",
+          width: "100%",
+          maxWidth: 420,
           whiteSpace: "pre-wrap",
+          color: "#00ff88",
+          textAlign: "left",
+          lineHeight: 1.5
         }}>
 ✅ AI 진단 결과
-
 {result}
         </pre>
-      )}
+      }
 
+      {/* 119 연동 */}
       <a
-        href="https://www.appsheet.com/start/58068f53-8b94-4e26-9487-e65dc73261cb?view=%EB%86%8D%EA%B0%80%20%EC%A0%91%EC%88%98"
+        href="https://docs.google.com/forms/d/e/1FAIpQLSdkGcwL_B-10yU0gj4oareM4iajMPND6JtGlZEwjbwPbnQBEg/viewform"
         target="_blank"
         rel="noopener noreferrer"
         style={{
-          marginTop: 30,
-          display: "inline-block",
+          display: "block",
           width: "100%",
           maxWidth: 420,
-          padding: "14px",
+          marginTop: 24,
           background: "#ff1a1a",
-          color: "#fff",
-          textDecoration: "none",
-          borderRadius: 10,
-          fontSize: 18,
+          padding: 14,
+          borderRadius: 12,
+          textAlign: "center",
           fontWeight: "bold",
-        }}
-      >
+          textDecoration: "none",
+          color: "#fff",
+          fontSize: 17
+        }}>
         🚨 119 출동 요청
       </a>
+
     </main>
   );
 }
