@@ -1,111 +1,40 @@
-import { NextResponse } from "next/server";
-import OpenAI from "openai";
+messages: [
+  {
+    role: "system",
+    content: `
+당신은 대한민국 전문 농업 병해 진단 AI입니다.
 
-export const runtime = "nodejs";
+사진을 기반으로 다음 항목을 반드시 포함하여 진단하십시오:
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
+1. 작물명 (가능하면 한글 + 학명)
+2. 추정 병해 또는 해충
+3. 주요 증상 (사진 근거 서술)
+4. 발생 원인 (환경/기상/토양 조건 반영)
+5. 방제 방법:
+   - 물리적 방제
+   - 생물학적 방제
+   - 화학적 방제 (등록약제 범위 내 언급)
+6. 예방 관리
+7. 농가 실천 요약
 
-export async function POST(req: Request) {
-  try {
-    const formData = await req.formData();
-    const file = formData.get("file") as File | null;
-
-    if (!file) {
-      return NextResponse.json({
-        ok: false,
-        error: "이미지 파일이 전달되지 않았습니다.",
-      });
-    }
-
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const base64 = buffer.toString("base64");
-
-    const prompt = `
-너는 대한민국 농업 병해충 전문 AI이다.
-
-⚠️ 가장 중요:
-- 반드시 사진 속 작물을 정확히 식별하라.
-- 확신할 수 없으면 "작물 식별 불가"로 출력하라.
-- 추측, 일반화, 임의 판단 절대 금지.
-
-------------------------------------------------
-
-출력 구조:
-
-[작물 식별]
-- 작물명:
-- 신뢰도(%):
-
-[증상 관찰]
-- ①
-- ②
-- ③
-
-[의심 병해충 TOP3]
-- 1위:
-- 2위:
-- 3위:
-
-[판단 근거]
-
-[방제 대책]
-1) 친환경
-2) 등록 약제
-3) 살포 시기
-
-[재발 방지]
-
-[농민 즉시 행동 체크리스트]
-`;
-
-    const response = await client.responses.create({
-      model: "gpt-4.1",
-      temperature: 0.2,
-      input: [
-        {
-          role: "user",
-          content: [
-            { type: "input_image", image_base64: base64 },
-            { type: "input_text", text: prompt },
-          ],
-        },
-      ],
-      max_output_tokens: 800,
-    });
-
-    let output = "";
-
-    if (response.output_text) {
-      output = response.output_text;
-    } else {
-      for (const msg of response.output || []) {
-        if (msg.type === "message") {
-          for (const val of msg.content || []) {
-            if (val.type === "output_text") output += val.text;
-          }
+무작위 추측 금지.
+사진 상 명확하지 않을 경우 반드시 '정확한 진단 불가' 명시.
+`
+  },
+  {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text:
+          "이 사진을 정확히 분석하여 위 기준에 맞춰 전문가 수준의 상세 진단을 제공하세요."
+      },
+      {
+        type: "image_url",
+        image_url: {
+          url: `data:image/jpeg;base64,${base64}`
         }
       }
-    }
-
-    if (!output.trim()) {
-      return NextResponse.json({
-        ok: false,
-        error: "AI 응답 생성 실패",
-      });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      text: output,
-    });
-
-  } catch (err) {
-    console.error("AI 분석 에러:", err);
-    return NextResponse.json({
-      ok: false,
-      error: "AI 서버 처리 중 오류 발생",
-    });
+    ]
   }
-}
+]
