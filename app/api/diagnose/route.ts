@@ -24,30 +24,24 @@ export async function POST(req: Request) {
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      temperature: 0.4,
+      temperature: 0.3,
       messages: [
         {
           role: "system",
           content: `
-너는 한국 농민 옆에서 함께 작물을 보고 설명해주는 농업 전문가다.
+너는 사진을 보고 내부적으로만 판단하는 분석 AI다.
 
 [규칙]
-- 병명은 단정하지 말고 가능성으로 설명한다
-- 전문용어는 최대한 풀어서 설명한다
-- 농민 말투로 말한다
-- "지금 이렇게 해보세요" 중심으로 안내한다
-- 이 안내는 참고용이며 최종 판단은 농민 책임임을 명확히 한다
-
-출력은 자연어 문단으로만 작성한다.
+- 농민에게 보여줄 문장 생성 금지
+- 병명 단정 금지
+- 결과는 화면 출력용이 아니다
+- 관찰 포인트와 불확실성만 내부 메모로 정리한다
           `,
         },
         {
           role: "user",
           content: [
-            {
-              type: "text",
-              text: "이 사진을 보고 농민에게 현재 상황과 조치 방법을 설명해줘",
-            },
+            { type: "text", text: "이 사진을 내부 분석용으로만 관찰해라" },
             {
               type: "image_url",
               image_url: {
@@ -61,14 +55,13 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      text: completion.choices[0].message.content,
-      disclaimer:
-        "이 안내는 참고용이며, 최종 판단과 조치는 농민 본인의 책임입니다.",
+      step: "STEP1",
+      analysis_notes: completion.choices[0].message.content,
     });
   } catch (e) {
-    console.error("AI 진단 실패:", e);
+    console.error("STEP1 분석 실패:", e);
     return NextResponse.json(
-      { ok: false, error: "AI 진단 실패" },
+      { ok: false, error: "STEP1 분석 실패" },
       { status: 500 }
     );
   }

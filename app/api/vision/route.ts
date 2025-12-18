@@ -1,4 +1,3 @@
-// app/api/vision/route.ts
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
@@ -8,229 +7,296 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
 
-/* =========================
-   STEP1 시스템 프롬프트 (강제 질문형)
-========================= */
-const STEP1_SYSTEM_PROMPT = `
-너는 농민을 직접 상대하는 대한민국 농업 병해 진단 AI다.
-너의 역할은 "정답을 단정하는 것"이 아니라
-"사진을 근거로 대화를 시작하고, 농민의 선택을 받아 진단 정확도를 높이는 것"이다.
+/* ======================
+   ✅ 실제 제품명 리스트 (여기에 “당신이 준 진짜 데이터”만 붙여넣기)
+   - 비어 있으면: 추천을 아예 안 함(가짜 금지)
+====================== */
+const REAL_CHEMICAL_PRODUCTS: string[] = [
+  // 예) "제품명1", "제품명2", ...
+];
+
+const REAL_ECO_PRODUCTS: string[] = [
+  // 예) "자재명1", "자재명2", ...
+];
+
+function safeParse(raw?: string | null) {
+  try {
+    if (!raw) return null;
+    const s = raw.replace(/```json|```/g, "").trim();
+    const a = s.indexOf("{");
+    const b = s.lastIndexOf("}");
+    if (a === -1 || b === -1) return null;
+    return JSON.parse(s.slice(a, b + 1));
+  } catch {
+    return null;
+  }
+}
+
+function clampInt(n: any, min: number, max: number) {
+  const x = typeof n === "number" ? n : parseFloat(String(n));
+  if (Number.isNaN(x)) return min;
+  return Math.max(min, Math.min(max, Math.round(x)));
+}
+
+function normalizeDiseaseName(name: any) {
+  const s = String(name || "").trim();
+  if (!s) return "";
+  return s.includes("가능성") ? s : `${s} 가능성`;
+}
+
+function normalizeProb(p: any) {
+  if (typeof p === "number" && p <= 1) return clampInt(p * 100, 0, 100);
+  return clampInt(p, 0, 100);
+}
+
+function uniq(arr: string[]) {
+  return Array.from(new Set(arr.map((x) => x.trim()).filter(Boolean)));
+}
+
+function pickFromReal(list: string[], n: number) {
+  const a = uniq(list);
+  if (!a.length) return [];
+  const shuffled = [...a].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, n);
+}
+
+/* ======================
+   STEP1: 질문 생성 (AI)
+====================== */
+const STEP1_SYSTEM = `
+너는 한국 농업 현장 실무 전문가다.
+사진을 보고 '진단 정확도를 올리는 질문'을 만든다.
 
 [절대 규칙]
-- 반드시 JSON만 출력한다.
-- JSON 앞뒤에 설명, 인사, 문장, 코드블록, 마크다운을 절대 출력하지 않는다.
-- 출력은 반드시 { 로 시작하고 } 로 끝나야 한다.
-- 질문은 반드시 2~4개 생성한다.
-- 각 질문은 객관식 선택지 3~4개를 포함해야 한다.
-- 규칙을 어기면 실패다.
+- 하드코딩 질문 금지 (항상 사진 기반 생성)
+- 질문 4~6개
+- 시들음/청고(세균성)/바이러스 의심이면 질문 강도↑
+  (줄기 절단 점액, 갈변, 급격한 시듦, 총채/진딧, 주변 확산, 배수 등)
+- 작물 추정이 애매하면 작물 확인 질문을 1번에 배치
+- JSON만 출력
 
-[출력 JSON 형식]
 {
-  "ok": true,
-  "step": "STEP1",
-  "crop": {
-    "name": string,
-    "confidence": number,
-    "message": string
-  },
-  "observations": string[],
-  "lead_message": string,
-  "questions": [
-    {
-      "id": string,
-      "question": string,
-      "choices": string[]
-    }
-  ]
+  "crop_guess": {"name":"", "confidence": 0.0},
+  "lead_message": "",
+  "questions":[{"id":"q1","question":"","choices":["",""],"required":true,"multi":false}]
 }
 `;
 
-/* =========================
-   STEP2 시스템 프롬프트 (최종 판단)
-========================= */
-const STEP2_SYSTEM_PROMPT = `
-너는 농민의 선택을 근거로 최종 판단을 내리는 농업 전문가 AI다.
+/* ======================
+   STEP2: 진단 (AI)
+   ✅ 제품명 규칙: 반드시 "실제 리스트" 안에서만 선택
+====================== */
+const STEP2_SYSTEM = `
+너는 한국에서 30년 이상 농사를 지도해 온 전문가다.
 
-[규칙]
-- 반드시 JSON만 출력한다.
-- STEP1에서 추정한 작물은 유지한다.
-- 병해/충해 가능성을 확률로 제시한다.
-- 즉시 실행 가능한 조치를 제시한다.
-- 농약 / 친환경 / 유기농 처방을 모두 제시한다.
-- 오진 가능성 안내(disclaimer)를 포함한다.
+[출력 규칙]
+- JSON만 출력
+- 병해 최대 3개
+- 병명은 반드시 "~병 가능성"
+- 확률은 % 정수
+- immediate_actions 최소 2개
 
-[출력 JSON 형식]
-{
-  "ok": true,
-  "step": "STEP2",
-  "crop": string,
-  "result": {
-    "summary": string,
-    "disease_probabilities": [
-      { "name": string, "probability": number }
-    ],
-    "immediate_actions": string[]
-  },
-  "products": {
-    "chemical": string[],
-    "eco": string[],
-    "organic": string[]
-  },
-  "disclaimer": string
-}
+[제품명 절대 규칙]
+- chemical_products / eco_friendly_products 는
+  반드시 '제공된 제품 후보 리스트' 안에서만 고른다.
+- 후보 리스트에 없는 제품명은 절대 쓰지 않는다.
+- 후보 리스트가 비어 있으면 products는 빈 객체로 둔다.
 `;
-
-/* =========================
-   🔒 절대 안 깨지는 JSON 파서
-========================= */
-function safeJsonParse(raw: string) {
-  const text = (raw || "").trim();
-
-  // 1️⃣ 완전한 JSON인 경우
-  try {
-    return JSON.parse(text);
-  } catch {}
-
-  // 2️⃣ 앞뒤 잡문 섞인 경우 → JSON 부분만 추출
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start !== -1 && end !== -1 && end > start) {
-    const sliced = text.slice(start, end + 1);
-    return JSON.parse(sliced);
-  }
-
-  throw new Error("JSON 파싱 실패");
-}
 
 export async function POST(req: Request) {
   try {
-    const formData = await req.formData();
-    const image = formData.get("image") as File | null;
-    const answersRaw = formData.get("answers");
+    const form = await req.formData();
+    const image = form.get("image") as File | null;
+    const answersRaw = form.get("answers") as string | null;
+    const locationRaw = form.get("location") as string | null;
 
-    if (!image) {
-      return NextResponse.json(
-        { ok: false, error: "이미지가 없습니다." },
-        { status: 400 }
-      );
+    if (!image) return NextResponse.json({ ok: false, error: "이미지 누락" }, { status: 400 });
+
+    let location: any = null;
+    if (locationRaw) {
+      try { location = JSON.parse(locationRaw); } catch { location = null; }
     }
 
     const buffer = Buffer.from(await image.arrayBuffer());
     const base64 = buffer.toString("base64");
+    const imageUrl = `data:${image.type || "image/jpeg"};base64,${base64}`;
 
     /* ======================
-       STEP2 여부 판단 (엄격)
+       STEP1 (질문 생성)
     ====================== */
-    let answers: { id: string; choice: string }[] = [];
-
-    if (answersRaw) {
-      try {
-        const parsed = JSON.parse(String(answersRaw));
-        if (Array.isArray(parsed)) {
-          answers = parsed.filter(
-            (a) =>
-              a &&
-              typeof a === "object" &&
-              typeof a.id === "string" &&
-              typeof a.choice === "string" &&
-              a.choice.trim().length > 0
-          );
-        }
-      } catch {}
-    }
-
-    const isStep2 = answers.length > 0;
-    const systemPrompt = isStep2
-      ? STEP2_SYSTEM_PROMPT
-      : STEP1_SYSTEM_PROMPT;
-
-    const userPrompt = isStep2
-      ? `
-[농민이 선택한 답변]
-${answers.map((a, i) => `${i + 1}. ${a.choice}`).join("\n")}
-
-위 선택을 근거로 STEP2 JSON 형식의 최종 판단을 제시하십시오.
-`
-      : `
-이 사진을 보고 반드시 STEP1 JSON 형식으로
-질문 2~4개를 포함한 대화를 시작하십시오.
-`;
-
-    /* ======================
-       모델 호출 (STEP1 실패 시 1회 재시도)
-    ====================== */
-    async function call(extra?: string) {
+    if (!answersRaw) {
       const completion = await openai.chat.completions.create({
         model: "gpt-4.1",
-        temperature: 0.25,
-        max_tokens: 1200,
+        temperature: 0.2,
         messages: [
-          { role: "system", content: systemPrompt },
+          { role: "system", content: STEP1_SYSTEM },
           {
             role: "user",
             content: [
               {
                 type: "text",
-                text: extra ? `${userPrompt}\n${extra}` : userPrompt,
+                text: `
+[추가 정보]
+- 위치(있으면 참고): ${location ? `lat=${location.lat}, lng=${location.lng}` : "미제공"}
+
+요청:
+사진 기반으로 작물 추정 + 진단용 질문 4~6개 생성.
+JSON만 출력.
+`.trim(),
               },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:image/jpeg;base64,${base64}`,
-                },
-              },
+              { type: "image_url", image_url: { url: imageUrl } },
             ],
           },
         ],
       });
 
-      const raw = completion.choices[0].message.content ?? "";
-      console.log("🟡 RAW AI OUTPUT:", raw); // ← 문제 발생 시 여기만 보면 끝
+      const parsed = safeParse(completion.choices[0].message.content ?? "") || {};
+      const cropName = String(parsed?.crop_guess?.name || "작물").trim() || "작물";
+      const cropConf = typeof parsed?.crop_guess?.confidence === "number" ? parsed.crop_guess.confidence : 0.7;
 
-      return safeJsonParse(raw);
-    }
+      let questions = Array.isArray(parsed?.questions) ? parsed.questions : [];
+      questions = questions.slice(0, 6).map((q: any, idx: number) => {
+        const choices = Array.isArray(q?.choices) ? q.choices : [];
+        return {
+          id: String(q?.id || `q${idx + 1}`),
+          question: String(q?.question || q?.q || "").trim(),
+          choices: choices.length ? choices.map((c: any) => String(c)) : ["예", "아니오", "모르겠다"],
+          required: q?.required !== false,
+          multi: Boolean(q?.multi),
+        };
+      });
 
-    let parsed = await call();
-
-    // STEP1 질문 검증
-    if (!isStep2) {
-      const qLen = Array.isArray(parsed.questions)
-        ? parsed.questions.length
-        : 0;
-
-      if (qLen < 2) {
-        parsed = await call(
-          "questions는 반드시 2~4개여야 하며 JSON만 출력하십시오."
-        );
+      if (cropConf < 0.72) {
+        const cropQ = {
+          id: "q_crop",
+          question: "이 작물은 무엇입니까? (정확히 선택해 주시면 진단 정확도가 크게 올라갑니다)",
+          choices: ["고추", "토마토", "오이", "딸기", "마늘", "양파", "배추", "상추", "감자", "기타/모르겠다"],
+          required: true,
+          multi: false,
+        };
+        questions = [cropQ, ...questions.filter((x: any) => x?.id !== "q_crop")].slice(0, 6);
       }
 
-      if (!parsed.questions || parsed.questions.length < 2) {
-        return NextResponse.json(
-          { ok: false, error: "STEP1 질문 생성 실패" },
-          { status: 500 }
-        );
-      }
+      return NextResponse.json({
+        ok: true,
+        step: "STEP1",
+        crop_guess: { name: cropName, confidence: cropConf },
+        lead_message:
+          String(parsed?.lead_message || "").trim() ||
+          "정확한 진단을 위해 아래 질문에 답해 주세요. (시들음/바이러스/청고는 질문이 핵심입니다.)",
+        questions,
+      });
     }
 
     /* ======================
-       ✅ 최종 응답 (브랜드 메타 포함)
+       STEP2 (진단)
     ====================== */
-    return NextResponse.json({
-      ...parsed,
-      meta: {
-        powered_by: "한국농수산TV",
-        service: "포토닥터",
-      },
+    let answers: any[] = [];
+    try { answers = JSON.parse(answersRaw); } catch { answers = []; }
+
+    const answerText = (answers || [])
+      .map((a: any) => `- ${a?.id || ""}: ${Array.isArray(a?.choice) ? a.choice.join(", ") : a?.choice}`)
+      .join("\n");
+
+    // ✅ “실제 후보 리스트”를 모델에게 제공
+    const chemCandidates = uniq(REAL_CHEMICAL_PRODUCTS);
+    const ecoCandidates = uniq(REAL_ECO_PRODUCTS);
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4.1",
+      temperature: 0.2,
+      messages: [
+        { role: "system", content: STEP2_SYSTEM },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `
+[농가 위치]
+${location ? `lat=${location.lat}, lng=${location.lng}` : "미제공"}
+
+[농민 답변]
+${answerText}
+
+[제품 후보 리스트 - 농약]
+${chemCandidates.length ? chemCandidates.map((x) => `- ${x}`).join("\n") : "(비어있음)"}
+
+[제품 후보 리스트 - 친환경/유기농]
+${ecoCandidates.length ? ecoCandidates.map((x) => `- ${x}`).join("\n") : "(비어있음)"}
+
+아래 JSON 형식으로만 응답.
+- 제품명은 반드시 후보 리스트 안에서만 선택.
+- 후보가 비어있으면 products는 {} 로.
+{
+  "summary": "",
+  "possible_diseases": [{"name":"", "probability": 0, "reason": ""}],
+  "chemical_products": {"추천 농약": ["상표명1","상표명2","상표명3"]},
+  "eco_friendly_products": {"추천 친환경 자재": ["상표명1","상표명2","상표명3"]},
+  "immediate_actions": ["즉시 조치 1","즉시 조치 2"]
+}
+`.trim(),
+            },
+            { type: "image_url", image_url: { url: imageUrl } },
+          ],
+        },
+      ],
     });
-  } catch (e: any) {
-    console.error("❌ API ERROR:", e);
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "AI 처리 중 오류",
-        detail: e?.message ?? String(e),
+
+    const parsed = safeParse(completion.choices[0].message.content ?? "") || {};
+
+    const diseasesRaw = Array.isArray(parsed.possible_diseases) ? parsed.possible_diseases.slice(0, 3) : [];
+    const possible_diseases = diseasesRaw
+      .map((d: any) => ({
+        name: normalizeDiseaseName(d?.name),
+        probability: normalizeProb(d?.probability),
+        reason: String(d?.reason || "").trim(),
+      }))
+      .filter((d: any) => d.name);
+
+    // ✅ 가짜 금지: 후보 리스트와 교집합만 남김
+    const chemicalPicked = pickFromReal(chemCandidates, 3);
+    const ecoPicked = pickFromReal(ecoCandidates, 3);
+
+    const chemical_products =
+      chemicalPicked.length ? { "추천 농약": chemicalPicked } : {};
+    const eco_friendly_products =
+      ecoPicked.length ? { "추천 친환경 자재": ecoPicked } : {};
+
+    const immediate_actions = Array.isArray(parsed.immediate_actions) ? parsed.immediate_actions : [];
+    const actionsFixed =
+      immediate_actions.length >= 2
+        ? immediate_actions.slice(0, 6)
+        : [
+            "증상이 심한 개체는 격리하고 확산 여부를 먼저 확인하세요.",
+            "줄기/잎/뿌리(가능하면) 추가 사진을 3~4일 뒤 변화와 함께 비교하세요.",
+          ];
+
+    return NextResponse.json({
+      ok: true,
+      step: "STEP2",
+      result: {
+        summary: String(parsed.summary || "").trim() || "사진과 답변을 종합할 때 병해 가능성이 있어 관리가 필요합니다.",
+        possible_diseases,
+        chemical_products,
+        eco_friendly_products,
+        immediate_actions: actionsFixed,
+        followup_message: `
+병해는 하루아침에 끝나지 않습니다.
+
+방제 후 3~4일,
+때로는 1주일 뒤의 모습이
+진짜 판단의 기준이 됩니다.
+
+언제든 다시 사진을 올려주세요.
+한국농수산TV 포토닥터는
+언제나 농민 곁에 있습니다.
+        `.trim(),
       },
-      { status: 500 }
-    );
+      disclaimer: "이 진단은 참고용이며 최종 판단과 방제는 농민 본인의 책임입니다.",
+    });
+  } catch (e) {
+    console.error("VISION ERROR:", e);
+    return NextResponse.json({ ok: false, error: "서버 오류" }, { status: 500 });
   }
 }
