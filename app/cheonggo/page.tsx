@@ -65,7 +65,7 @@ export default function Page() {
       form.append("image", file);
       form.append("cropName", cropName);
 
-      const res = await fetch("/api/diagnose-new", {
+      const res = await fetch("/api/vision", {
         method: "POST",
         body: form,
       });
@@ -80,32 +80,32 @@ export default function Page() {
   };
 
   /* ======================
-     STEP 2 실행
-  ====================== */
-  const handleSecondAnalyze = async () => {
-    if (!step1) return;
+   STEP 2 실행
+====================== */
+const handleSecondAnalyze = async () => {
+  if (!step1 || !file) return;
 
-    setLoading(true);
+  setLoading(true);
 
-    try {
-      const res = await fetch("/api/diagnose-new/step2", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          crop: step1.crop,
-          observations: step1.observations,
-          answers,
-        }),
-      });
+  try {
+    const form = new FormData();
+    form.append("image", file);
+    form.append("answers", JSON.stringify(answers));
 
-      const data = await res.json();
-      setStep2(data);
-    } catch {
-      alert("2차 판단 오류");
-    } finally {
-      setLoading(false);
-    }
-  };
+    const res = await fetch("/api/vision", {
+      method: "POST",
+      body: form,
+    });
+
+    const data = await res.json();
+    setStep2(data);
+  } catch (e) {
+    console.error(e);
+    alert("2차 판단 오류");
+  } finally {
+    setLoading(false);
+  }
+};
 
   /* ======================
      UI

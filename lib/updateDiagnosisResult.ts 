@@ -1,0 +1,59 @@
+import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+
+/**
+ * AI 진단 결과를 기존 진단 문서에 업데이트
+ * - STEP1 / STEP2 공용
+ */
+export async function updateDiagnosisResult(params: {
+  diagnosisId: string;
+
+  step: "STEP1" | "STEP2";
+
+  step1Result?: {
+    analysis_notes: string;
+  };
+
+  step2Result?: {
+    summary: string;
+    actions: string[];
+    riskLevel?: "LOW" | "WARNING" | "CRITICAL";
+  };
+}) {
+  const { diagnosisId, step, step1Result, step2Result } = params;
+
+  if (!diagnosisId) {
+    throw new Error("diagnosisId is required");
+  }
+
+  const ref = doc(db, "diagnoses", diagnosisId);
+
+  const payload: any = {
+    updatedAt: serverTimestamp(),
+  };
+
+  if (step === "STEP1" && step1Result) {
+    payload.ai = {
+      step1: {
+        analysisNotes: step1Result.analysis_notes,
+        at: serverTimestamp(),
+      },
+    };
+  }
+
+  if (step === "STEP2" && step2Result) {
+    payload.ai = {
+      ...(step1Result ? { step1: step1Result } : {}),
+      step2: {
+        summary: step2Result.summary,
+        actions: step2Result.actions,
+        riskLevel: step2Result.riskLevel ?? null,
+        at: serverTimestamp(),
+      },
+    };
+  }
+
+  await updateDoc(ref, payload);
+
+  console.log("🟢 updateDiagnosisResult 성공:", diagnosisId, step);
+}
