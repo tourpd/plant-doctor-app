@@ -1,135 +1,55 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import React from "react";
 
-type Incident = {
-  id: string;
-  status?: string;
-  source?: string;
-  imageUrl?: string;
-  summary?: string;
-  createdAt?: any;
-};
+const HOTLINE_FORM_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLSdkcgwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform";
 
 export default function IncidentsPage() {
-  const [items, setItems] = useState<Incident[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  /** Incident 리스트 조회 */
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch("/api/incidents?limit=50");
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
-        setItems(data.items ?? []);
-      } catch (e) {
-        alert("Incident 리스트 불러오기 실패");
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, []);
-
-  if (loading) {
-    return (
-      <main style={{ padding: 24 }}>
-        <h2>📋 Incident 관제</h2>
-        <p>불러오는 중…</p>
-      </main>
-    );
-  }
+  const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const incidentId = params?.get("incident_id") || "";
 
   return (
-    <main style={{ padding: 24, maxWidth: 960 }}>
-      <h2 style={{ marginBottom: 20 }}>📋 Incident 관제 리스트</h2>
+    <div className="min-h-screen bg-black text-white px-4 py-6">
+      <div className="max-w-xl mx-auto space-y-4">
+        <div className="text-center font-bold text-red-300 text-xl">농사톡톡 119 긴급출동</div>
 
-      {items.length === 0 && <p>등록된 incident가 없습니다.</p>}
+        <div className="rounded-2xl border border-zinc-700 p-4 space-y-2">
+          <div className="font-bold">농민님, 지금은 “현장 정보”가 제일 중요합니다.</div>
+          <div className="text-sm text-zinc-200">
+            119는 사진만으로 끝내지 않고, <b>작물/지역/증상/확산 속도</b>를 기준으로 판단합니다.
+            아래 폼에 간단히 입력해 주세요.
+          </div>
+        </div>
 
-      <table
-        style={{
-          width: "100%",
-          borderCollapse: "collapse",
-          background: "#0d0d0d",
-          color: "#fff",
-        }}
-      >
-        <thead>
-          <tr style={{ background: "#111" }}>
-            <th style={th}>생성시간</th>
-            <th style={th}>상태</th>
-            <th style={th}>출처</th>
-            <th style={th}>요약</th>
-            <th style={th}>상세</th>
-          </tr>
-        </thead>
+        {incidentId && (
+          <div className="rounded-2xl border border-emerald-400 p-4">
+            <div className="font-bold text-emerald-300">접수 추적 번호</div>
+            <div className="text-xl font-bold mt-1">{incidentId}</div>
+            <div className="text-xs text-zinc-300 mt-1">
+              이 번호는 추후 “진행상태 확인”과 상담 연결에 사용됩니다.
+            </div>
+          </div>
+        )}
 
-        <tbody>
-          {items.map((item) => (
-            <tr key={item.id} style={{ borderBottom: "1px solid #222" }}>
-              <td style={td}>
-                {item.createdAt?.seconds
-                  ? new Date(
-                      item.createdAt.seconds * 1000
-                    ).toLocaleString()
-                  : "-"}
-              </td>
+        <a
+          className="block w-full text-center rounded-2xl bg-red-700 font-bold py-4"
+          href={HOTLINE_FORM_URL}
+          target="_blank"
+          rel="noreferrer"
+        >
+          📝 119 접수 폼 열기
+        </a>
 
-              <td style={{ ...td, color: statusColor(item.status) }}>
-                {item.status ?? "CREATED"}
-              </td>
-
-              <td style={td}>{item.source ?? "-"}</td>
-
-              <td style={td}>
-                {item.summary ? item.summary.slice(0, 40) : "-"}
-              </td>
-
-              <td style={td}>
-                <Link
-                  href={`/incidents/${item.id}`}
-                  style={{
-                    color: "#00ff88",
-                    fontWeight: 700,
-                  }}
-                >
-                  열기 →
-                </Link>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </main>
+        <div className="rounded-2xl border border-zinc-700 p-4 space-y-2">
+          <div className="font-bold text-yellow-300">입력 팁 (농민 관점)</div>
+          <ul className="list-disc pl-5 text-sm text-zinc-200 space-y-1">
+            <li>“언제부터” / “어디서(하우스/노지/구역)” / “얼마나 빨리 번지는지”를 꼭 적어주세요.</li>
+            <li>가능하면 잎 앞/잎 뒤/줄기/생장점 4장을 추가로 촬영해 주세요.</li>
+            <li>이미 방제/자재를 사용했다면 “언제/무엇을/몇 번”만 적어도 충분합니다.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
   );
-}
-
-/* ===== 스타일 ===== */
-
-const th: React.CSSProperties = {
-  padding: 10,
-  textAlign: "left",
-  borderBottom: "2px solid #333",
-};
-
-const td: React.CSSProperties = {
-  padding: 10,
-  verticalAlign: "top",
-};
-
-function statusColor(status?: string) {
-  switch (status) {
-    case "CREATED":
-      return "#00bfff";
-    case "ANALYZED":
-      return "#ffd400";
-    case "CRITICAL":
-      return "#ff4444";
-    case "CLOSED":
-      return "#aaa";
-    default:
-      return "#0f0";
-  }
 }

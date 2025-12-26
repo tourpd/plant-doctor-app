@@ -1,0 +1,31 @@
+export function signalizeText(text: string): TextSignal[] {
+  const t = text.replace(/\s+/g, "");
+
+  const signals: TextSignal[] = [];
+
+  if (t.includes("갑자기") || t.includes("하루이틀")) {
+    signals.push({ key: "FAST_SPREAD", weight: 3, source: "FARMER_TEXT" });
+  }
+
+  if (t.includes("서서히") || t.includes("조금씩")) {
+    signals.push({ key: "SLOW_SPREAD", weight: 2, source: "FARMER_TEXT" });
+  }
+
+  if (t.includes("열매") || t.includes("과일")) {
+    signals.push({ key: "FRUIT_SYMPTOM", weight: 3, source: "FARMER_TEXT" });
+  }
+
+  if (t.includes("잎") || t.includes("잎사귀")) {
+    signals.push({ key: "LEAF_SYMPTOM", weight: 2, source: "FARMER_TEXT" });
+  }
+
+  if (t.includes("곰팡") || t.includes("무름") || t.includes("썩")) {
+    signals.push({ key: "FUNGAL_HINT", weight: 3, source: "FARMER_TEXT" });
+  }
+
+  if (t.includes("약") || t.includes("농약")) {
+    signals.push({ key: "PESTICIDE_CONCERN", weight: 1, source: "FARMER_TEXT" });
+  }
+
+  return signals;
+}

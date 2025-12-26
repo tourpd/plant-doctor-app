@@ -1,0 +1,98 @@
+// /lib/runHealthyQuestion.ts
+
+type HistoryItem =
+  | { role: "doctor"; text: string }
+  | { role: "farmer"; qid: string; answer: string | string[] };
+
+/**
+ * ✅ farmer 타입으로 명확히 좁히는 getAnswer
+ */
+function getAnswer(
+  history: HistoryItem[],
+  qid: string
+): string | null {
+  const h = history.find(
+    (x): x is Extract<HistoryItem, { role: "farmer" }> =>
+      x.role === "farmer" && x.qid === qid
+  );
+
+  if (!h) return null;
+
+  return Array.isArray(h.answer) ? h.answer[0] : h.answer;
+}
+
+export function getNextHealthyQuestion({
+  parsed,
+  history,
+}: {
+  parsed: any;
+  history: HistoryItem[];
+}) {
+  /* ===============================
+     1️⃣ 생육 만족도 확인
+  =============================== */
+  const growOk = getAnswer(history, "healthy_confirm");
+
+  if (!growOk) {
+    return {
+      ok: true,
+      phase: "QUESTION",
+      primary_category: "NORMAL",
+      question: {
+        id: "healthy_confirm",
+        text: "현재 작물의 전반적인 생육 상태는 어떻습니까?",
+        choices: [
+          "잎색·생육 모두 좋고 잘 크고 있다",
+          "대체로 괜찮지만 일부만 이상하다",
+          "겉보기엔 괜찮은데 불안하다",
+          "잘 모르겠다",
+        ],
+      },
+      progress: { asked: 1, target: 2 },
+    };
+  }
+
+  /* ===============================
+     2️⃣ FINAL: 정상 생육
+  =============================== */
+  if (growOk.includes("좋")) {
+    return {
+      ok: true,
+      phase: "FINAL",
+      primary_category: "NORMAL",
+      observations: parsed.observations ?? [
+        "잎의 색과 형태가 균일하고 생육이 안정적으로 보입니다.",
+      ],
+      next_steps: [
+        "현재 관리 상태를 유지하며 급격한 투입은 피하세요.",
+        "기온·수분 관리만 안정적으로 이어가면 됩니다.",
+      ],
+      do_not: [
+        "불안하다는 이유로 불필요한 약제·자재를 추가하지 마세요.",
+      ],
+      need_119_if: [
+        "갑자기 잎색이 급변하거나 생육 정지가 나타날 때",
+      ],
+    };
+  }
+
+  /* ===============================
+     3️⃣ 정상 아님 → 환경/영양 분기
+  =============================== */
+  return {
+    ok: true,
+    phase: "QUESTION",
+    primary_category: "ENVIRONMENT",
+    question: {
+      id: "env_confirm",
+      text: "생육 문제의 양상은 어떤 쪽에 가깝습니까?",
+      choices: [
+        "잎색이 연하거나 진해졌다",
+        "잎만 크고 웃자람이 심하다",
+        "전체적으로 기운이 없다",
+        "잘 모르겠다",
+      ],
+    },
+    progress: { asked: 2, target: 3 },
+  };
+}

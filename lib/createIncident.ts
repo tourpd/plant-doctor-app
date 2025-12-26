@@ -1,5 +1,5 @@
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { db } from "@/firebase";
+import { db } from "./firebase";
 
 /**
  * Incident 생성 (사진 업로드 직후 1회만 호출)

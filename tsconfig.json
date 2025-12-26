@@ -16,22 +16,27 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+
+      "@/lib/*": ["app/lib/*"],
+      "@/data/*": ["app/data/*"],
+      "@/constants/*": ["app/constants/*"],
+      "@/components/*": ["app/components/*"],
+      "@/app/*": ["app/*"],
+
+      // 🔥 추가 (빨간줄 제거용)
+      "@lib/*": ["app/lib/*"],
+      "@data/*": ["app/data/*"]
     },
 
-    "plugins": [
-      {
-        "name": "next"
-      }
-    ]
+    "plugins": [{ "name": "next" }]
   },
   "include": [
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    ".next/dev/types/**/*.ts"
   ],
   "exclude": ["node_modules"]
 }

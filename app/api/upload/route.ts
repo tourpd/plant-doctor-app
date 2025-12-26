@@ -1,11 +1,13 @@
-import { NextResponse } from "next/server";
-import { bucket } from "@/lib/firebaseAdmin";
-import { v4 as uuidv4 } from "uuid";
+import { NextRequest, NextResponse } from "next/server";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { app } from "@/lib/firebase";
 
-export async function POST(req: Request) {
+export const runtime = "nodejs";
+
+export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
-    const file = formData.get("file") as File;
+    const file = formData.get("file") as File | null;
 
     if (!file) {
       return NextResponse.json(
@@ -14,25 +16,29 @@ export async function POST(req: Request) {
       );
     }
 
-    const bytes = Buffer.from(await file.arrayBuffer());
-    const filename = `photos/${Date.now()}-${uuidv4()}-${file.name}`;
+    const buffer = Buffer.from(await file.arrayBuffer());
 
-    const blob = bucket.file(filename);
+    // ⚠️ 여기서만 storage 생성 (빌드 타임 방지)
+    const storage = getStorage(app);
+    const fileRef = ref(
+      storage,
+      `uploads/${Date.now()}-${file.name}`
+    );
 
-    await blob.save(bytes, {
+    await uploadBytes(fileRef, buffer, {
       contentType: file.type,
-      resumable: false,
     });
 
-    await blob.makePublic();
+    const url = await getDownloadURL(fileRef);
 
-    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${filename}`;
-
-    return NextResponse.json({ url: publicUrl });
+    return NextResponse.json({
+      ok: true,
+      url,
+    });
   } catch (err: any) {
-    console.error("🔥 업로드 API 에러:", err);
+    console.error("UPLOAD ERROR", err);
     return NextResponse.json(
-      { error: err.message || "업로드 실패" },
+      { error: "업로드 실패" },
       { status: 500 }
     );
   }
