@@ -99,20 +99,23 @@ const FORM_119_URL =
   }, [api]);
 
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0] || null;
-    if (!f) return;
+  const f = e.target.files?.[0] || null;
+  if (!f) return;
 
-    setMainFile(f);
-    setPreview(URL.createObjectURL(f));
+  // ✅ 새 케이스 초기화 (먼저)
+  setApi(null);
+  setHistory([]);
+  setSelected([]);
+  setFreeText("");
 
-    // 새 케이스 초기화
-    setApi(null);
-    setHistory([]);
-    setSelected([]);
-    setFreeText("");
+  // ✅ 파일 세팅
+  setMainFile(f);
+  setPreview(URL.createObjectURL(f));
 
-    e.target.value = "";
-  };
+  // ❌ 여기서 API 호출 절대 안 함
+
+  e.target.value = "";
+};
 
   const callApi = async (action: "start" | "answer", payload?: { qid: string; answer: any; kind?: "CHOICE" | "FREE_TEXT" }) => {
     if (!mainFile) {
@@ -526,201 +529,157 @@ const Spinner = ({ loading, phaseText }: SpinnerProps) => (
           </div>
         )}
 
-        {/* FINAL */}
-        {isFinal && api.ok === true && (
-          <div
-            style={{
-              marginTop: 14,
-              padding: 16,
-              borderRadius: 18,
-              border: "3px solid #ffd400",
-              background: "#0b0b0b",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <div style={{ fontSize: 20, fontWeight: 900 }}>📌 최종 정리</div>
-              <div style={{ color: "#aaa", fontWeight: 900, fontSize: 13 }}>완료</div>
-            </div>
+       {/* ===== 한 줄 결론 ===== */}
+{api.summary && (
+  <div
+    style={{
+      marginTop: 14,
+      padding: 12,
+      borderRadius: 14,
+      background: "#001f12",
+      border: "2px solid #00ff88",
+      color: "#00ff88",
+      fontWeight: 900,
+      lineHeight: 1.5,
+    }}
+  >
+    🧾 결론: {api.summary}
+    {typeof api.confidence === "number" && (
+      <span style={{ color: "#ffd400", marginLeft: 6 }}>
+        (유사도 {Math.round(api.confidence * 100)}%)
+      </span>
+    )}
+  </div>
+)}
 
-            <div style={{ marginTop: 10, color: "#00ff88", fontWeight: 900 }}>
-              🌿 작물: {api.crop_guess?.name || "미상"}{" "}
-              <span style={{ color: "#ffd400", fontSize: 13 }}>
-                (신뢰도 {Math.round((api.crop_guess?.confidence ?? 0) * 100)}%)
-              </span>
-            </div>
-
-            {(api.possible_causes ?? []).length > 0 && (
-              <>
-                <div style={{ marginTop: 12, fontWeight: 900 }}>🧭 가능성 Top3</div>
-                {(api.possible_causes ?? []).slice(0, 3).map((c, i) => (
-                  <div key={i} style={{ marginTop: 10, color: "#ddd" }}>
-                    • <b>{c.name}</b> <span style={{ color: "#ffd400" }}>({c.probability}%)</span>
-                    <div style={{ color: "#aaa", marginTop: 4, lineHeight: 1.55 }}>- {c.why}</div>
-                  </div>
-                ))}
-              </>
-            )}
-
-            {(api.must_check ?? []).length > 0 && (
-              <>
-                <div style={{ marginTop: 14, fontWeight: 900 }}>🔍 반드시 확인</div>
-                {(api.must_check ?? []).map((t, i) => (
-                  <div key={i} style={{ marginTop: 6 }}>• {t}</div>
-                ))}
-              </>
-            )}
-
-            {(api.do_not ?? []).length > 0 && (
-              <>
-                <div style={{ marginTop: 14, fontWeight: 900, color: "#ffd400" }}>⛔ 지금은 피해야 할 행동</div>
-                {(api.do_not ?? []).map((t, i) => (
-                  <div key={i} style={{ marginTop: 6 }}>• {t}</div>
-                ))}
-              </>
-            )}
-
-            {(api.next_steps ?? []).length > 0 && (
-              <>
-                <div style={{ marginTop: 14, fontWeight: 900 }}>✅ 다음 단계</div>
-                {(api.next_steps ?? []).map((t, i) => (
-                  <div key={i} style={{ marginTop: 6 }}>• {t}</div>
-                ))}
-              </>
-            )}
-
-            {api.followup_message && (
-              <div
-                style={{
-                  marginTop: 14,
-                  padding: 12,
-                  borderRadius: 14,
-                  background: "#000",
-                  border: "1px solid #222",
-                  color: "#ffd400",
-                  fontWeight: 900,
-                  whiteSpace: "pre-line",
-                  lineHeight: 1.6,
-                }}
-              >
-                {api.followup_message}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 119 고정 버튼 */}
-      <div
-        style={{
-          position: "fixed",
-          bottom: 16,
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: "100%",
-          maxWidth: 520,
-          padding: "0 16px",
-          zIndex: 9999,
-        }}
-      >
-        <a
-          href={FORM_119_URL}
-          target="_blank"
-          rel="noreferrer"
+{/* ===== 유사 사진 3장 ===== */}
+{(api.similarImages ?? []).length > 0 && (
+  <>
+    <div style={{ marginTop: 16, fontWeight: 900 }}>🔴 유사 증상 사례</div>
+    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+      {api.similarImages.map((src: string, i: number) => (
+        <img
+          key={i}
+          src={src}
+          alt={`similar-${i}`}
           style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            width: "100%",
-            height: 58,
-            borderRadius: 16,
-            background: "#d90000",
-            color: "#fff",
-            fontSize: 18,
-            fontWeight: 900,
-            textDecoration: "none",
-            boxShadow: "0 10px 26px rgba(217,0,0,0.45)",
+            width: "32%",
+            height: 90,
+            objectFit: "cover",
+            borderRadius: 10,
+            border: "2px solid #ff4444",
           }}
-        >
-          🚨 농사톡톡 119 긴급출동
-        </a>
-      </div>
+        />
+      ))}
+    </div>
+  </>
+)}
 
-      <style jsx global>{`
-        .whirl {
-          width: 18px;
-          height: 18px;
-          border-radius: 999px;
-          border: 3px solid rgba(255, 212, 0, 0.25);
-          border-top: 3px solid #ffd400;
-          animation: spin 0.85s linear infinite;
-        }
-        .whirlBig {
-          width: 36px;
-          height: 36px;
-          border-radius: 999px;
-          border: 4px solid rgba(0, 255, 136, 0.25);
-          border-top: 4px solid #00ff88;
-          animation: spin 0.85s linear infinite;
-          filter: drop-shadow(0 0 10px rgba(0, 255, 136, 0.25));
-        }
-        @keyframes spin {
-          to {
-            transform: rotate(360deg);
-          }
-        }
-      `}</style>
-    </main>
-  );
-}
+{/* ===== 대조 사진 ===== */}
+{(api.contrastImages ?? []).length > 0 && (
+  <>
+    <div style={{ marginTop: 14, fontWeight: 900, color: "#aaa" }}>
+      ⚪ 다른 경우 (대조)
+    </div>
+    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+      {api.contrastImages.map((src: string, i: number) => (
+        <img
+          key={i}
+          src={src}
+          alt={`contrast-${i}`}
+          style={{
+            width: "32%",
+            height: 90,
+            objectFit: "cover",
+            borderRadius: 10,
+            border: "2px solid #555",
+          }}
+        />
+      ))}
+    </div>
+  </>
+)}
 
-const inputStyle: React.CSSProperties = {
-  flex: 1,
-  padding: 12,
-  borderRadius: 12,
-  border: "1px solid #333",
-  background: "#0b0b0b",
-  color: "#fff",
-  outline: "none",
-};
+{/* ===== 농민 행동 규칙 ===== */}
+{api.actions && (
+  <>
+    <div style={{ marginTop: 18, fontWeight: 900 }}>🚜 지금 농부님 행동 가이드</div>
 
-const textAreaStyle: React.CSSProperties = {
-  width: "100%",
-  marginTop: 10,
-  padding: 12,
-  borderRadius: 12,
-  background: "#000",
-  border: "2px solid #00ff88",
-  color: "#fff",
-  fontSize: 15,
-  lineHeight: 1.6,
-  minHeight: 96,
-  outline: "none",
-};
+    {(api.actions.doNow ?? []).length > 0 && (
+      <>
+        <div style={{ marginTop: 10, color: "#00ff88", fontWeight: 900 }}>
+          ✅ 지금 바로 할 것
+        </div>
+        {api.actions.doNow.map((t: string, i: number) => (
+          <div key={i}>• {t}</div>
+        ))}
+      </>
+    )}
 
-const errorBox: React.CSSProperties = {
-  marginTop: 14,
-  padding: 12,
-  borderRadius: 14,
-  background: "#2a0000",
-  border: "1px solid #ff4444",
-  color: "#ffaaaa",
-  fontWeight: 900,
-  whiteSpace: "pre-line",
-  lineHeight: 1.45,
-};
+    {(api.actions.doNot ?? []).length > 0 && (
+      <>
+        <div style={{ marginTop: 10, color: "#ffd400", fontWeight: 900 }}>
+          ⛔ 지금은 하지 말 것
+        </div>
+        {api.actions.doNot.map((t: string, i: number) => (
+          <div key={i}>• {t}</div>
+        ))}
+      </>
+    )}
 
-function primaryBtn(disabled: boolean): React.CSSProperties {
-  return {
-    width: "100%",
-    height: 56,
-    marginTop: 12,
-    background: "#00cc44",
-    borderRadius: 14,
-    fontSize: 18,
-    fontWeight: 900,
-    border: "none",
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.55 : 1,
-  };
-}
+    {(api.actions.mustCheck ?? []).length > 0 && (
+      <>
+        <div style={{ marginTop: 10, fontWeight: 900 }}>
+          🔍 반드시 확인
+        </div>
+        {api.actions.mustCheck.map((t: string, i: number) => (
+          <div key={i}>• {t}</div>
+        ))}
+      </>
+    )}
+  </>
+)}
+
+{/* ===== 해결 링크 ===== */}
+{api.links && (
+  <div style={{ marginTop: 20 }}>
+    <a
+      href={api.links.katsv}
+      target="_blank"
+      rel="noreferrer"
+      style={{
+        display: "block",
+        width: "100%",
+        padding: 16,
+        marginBottom: 10,
+        borderRadius: 14,
+        background: "#00ff88",
+        color: "#000",
+        fontWeight: 900,
+        textAlign: "center",
+        textDecoration: "none",
+      }}
+    >
+      📺 한국농수산TV 해결 영상 보기
+    </a>
+
+    <a
+      href={api.links.emergency119}
+      target="_blank"
+      rel="noreferrer"
+      style={{
+        display: "block",
+        width: "100%",
+        padding: 16,
+        borderRadius: 14,
+        background: "#d90000",
+        color: "#fff",
+        fontWeight: 900,
+        textAlign: "center",
+        textDecoration: "none",
+      }}
+    >
+      🚨 농사톡톡 119 긴급출동
+    </a>
+  </div>
+)}
