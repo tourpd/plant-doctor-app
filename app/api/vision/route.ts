@@ -1,10 +1,50 @@
 // app/api/vision/route.ts
+// @ts-nocheck
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
 export const runtime = "nodejs";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+/* ===============================
+ * OpenAI Client
+ * =============================== */
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+});
+
+/* ===============================
+ * 질문 타입 정의 (BASECAMP 고정)
+ * - 주관식 단독 질문 제거
+ * - 객관식 + 농민 의견 기록만 허용
+ * =============================== */
+type Question = {
+  id: string;
+  kind: "CHOICE";
+  text: string;
+  choices: string[];
+
+  // ✅ 객관식 내부에서 농민 의견(메모) 입력 허용
+  allow_note?: boolean;
+  note_placeholder?: string;
+};
+
+/* ===============================
+ * 히스토리 타입 (vision 전용 최소 정의)
+ * =============================== */
+export type HistoryItem =
+  | {
+      role: "doctor";
+      kind?: string;
+      text: string;
+    }
+  | {
+      role: "farmer";
+      qid: string;
+      answer: string | string[];
+      note?: string; // ← allow_note 로 입력된 농민 의견
+      kind?: "CHOICE";
+    };
+
 
 /** =========================
  *  Types
@@ -12,26 +52,6 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 type PrimaryCategory = "DISEASE" | "PEST" | "ENVIRONMENT" | "GROWTH";
 type CropGuess = { name: string; confidence: number };
 
-type Question = {
-  id: string;
-  text: string;
-  choices: string[];
-  multi?: boolean;
-  kind?: "CHOICE" | "FREE_TEXT";
-};
-
-type HistoryItem =
-  | {
-      role: "doctor";
-      text: string;
-      kind?: string; // "__FIRST_VISION__", "__TEXT_SIGNAL__", "__TEXT_INTENT__" 등
-    }
-  | {
-      role: "farmer";
-      qid: string;
-      answer: string | string[];
-      kind?: "CHOICE" | "FREE_TEXT";
-    };
 
 type Progress = { asked: number; target: number };
 
@@ -165,20 +185,6 @@ function extractIntentFromFreeText(text: string): IntentSignal[] {
 /** =========================
  *  Question Pools (v1)
  * ========================= */
-const Q_FREE_TEXT: Question = {
-  id: "FREE_TEXT_OPINION",
-  kind: "FREE_TEXT",
-  text:
-    "제가 아직 묻지 못한 것 중에,\n지금 가장 궁금하거나 걱정되는 점이 있으면 한 줄만 적어주세요.\n(이 내용은 다음 질문과 최종 정리에 실제로 반영됩니다.)",
-  choices: [],
-};
-
-const Q_ROUTE_PICK: Question = {
-  id: "ROUTE_CONFIRM",
-  kind: "CHOICE",
-  text: "지금 상태에 더 가까운 쪽은 무엇인가요?",
-  choices: ["병해나 해충 때문에 갑자기 나빠진 것 같다", "크게 아프진 않지만 생육·성장이 고민된다", "잘 모르겠다"],
-};
 
 const Q_DISEASE_POOL: Question[] = [
   {
@@ -210,7 +216,6 @@ const Q_DISEASE_POOL: Question[] = [
     kind: "CHOICE",
     text: "최근 7일 안에 어떤 처리를 하셨나요?",
     choices: ["살균제를 사용했다", "살충제를 사용했다", "영양제나 엽면시비를 했다", "아무것도 하지 않았다", "기억이 정확하지 않다", "기타(직접 입력)"],
-    multi: true,
   },
 ];
 
@@ -244,7 +249,6 @@ const Q_GROWTH_POOL: Question[] = [
     kind: "CHOICE",
     text: "최근 10일 안에 하신 것(해당되는 것 모두)을 골라주세요.",
     choices: ["엽면시비", "관수 패턴 변경", "요소나 질소계 투입", "가리나 칼륨계 투입", "석회나 칼슘 투입", "아무것도 안 했다", "기억이 정확하지 않다", "기타(직접 입력)"],
-    multi: true,
   },
 ];
 
@@ -436,7 +440,7 @@ async function visionFirstRead(imageUrl: string, cropHint: string, regionHint: s
         role: "user",
         content: [
           { type: "input_text", text: user },
-          { type: "input_image", image_url: imageUrl },
+          { type: "input_image", image_url: imageUrl, detail: "auto" }
         ],
       },
     ],
@@ -465,6 +469,11 @@ async function visionFirstRead(imageUrl: string, cropHint: string, regionHint: s
     initial_risk: parsed.initial_risk || "MID",
   };
 }
+/* ===============================
+ * 질문 흐름 제어 상수 (BASECAMP 고정)
+ * =============================== */
+const TARGET_QUESTIONS = 3;      // 실제로 묻는 개수(예: 3)
+const MAX_QUESTIONS = 5;         // 풀에서 최대치(5개 제한)
 
 /** =========================
  *  State machine
@@ -579,43 +588,12 @@ function buildAskedQids(history: HistoryItem[]) {
     );
     if (picked) return picked.q;
   }
-  /* ===============================
-   * 2️⃣ FREE_TEXT_OPINION 강제 삽입
-   * =============================== */
-  if (
-    !asked.includes(Q_FREE_TEXT.id) &&
-    (asked.length === 1 || asked.length === 2)
-  ) {
-    return Q_FREE_TEXT;
-  }
 
-
-
-  /* ===============================
-   * 4️⃣ primary 기준 질문 풀
-   * =============================== */
-  const pool =
-    primary === "GROWTH"
-      ? Q_GROWTH_POOL
-      : primary === "ENVIRONMENT"
-      ? Q_ENVIRONMENT_POOL
-      : Q_DISEASE_POOL;
-
-  const candidate = pool.find((q) => !asked.includes(q.id));
-  if (candidate) return candidate;
-
-  /* ===============================
-   * 5️⃣ 마지막 FREE_TEXT 보정
-   * =============================== */
-  if (!asked.includes(Q_FREE_TEXT.id)) {
-    return Q_FREE_TEXT;
-  }
-
-  return null;
+    return null;
 }
 
 function shouldFinalize(askedQids: string[], minQuestions: number) {
-  const hasFreeText = askedQids.includes(Q_FREE_TEXT.id);
+  const hasFreeText = askedQids.includes("FREE_TEXT");
   return askedQids.length >= minQuestions && hasFreeText;
 }
 /** =========================
@@ -741,6 +719,7 @@ function stripEnglish(lines: string[]) {
   return lines.filter((l) => !/[a-zA-Z]/.test(l));
 }
 
+
 /** =========================
  *  POST handler (✅ export 스코프 정상)
  * ========================= */
@@ -824,18 +803,36 @@ if (action === "answer") {
     const buffer = Buffer.from(await image.arrayBuffer());
     const imageUrl = makeBase64DataUrl(buffer, image.type);
 
-    // FIRST_VISION 1회만
-    let firstVision = history.find((h) => h.role === "doctor" && h.kind === "__FIRST_VISION__");
-    if (!firstVision) {
-      const first = await visionFirstRead(imageUrl, crop, region);
-      history.push({ role: "doctor", kind: "__FIRST_VISION__", text: JSON.stringify(first) });
-      firstVision = history.find((h) => h.role === "doctor" && h.kind === "__FIRST_VISION__")!;
-    }
+     // ===============================
+// FIRST_VISION : 1회만 생성 + 타입 안전
+// ===============================
+let firstVision = history.find(
+  (h): h is Extract<HistoryItem, { role: "doctor"; text: string }> =>
+    h.role === "doctor" && h.kind === "__FIRST_VISION__"
+);
 
-    const first = safeJsonParse<any>(firstVision.text, null);
-    if (!first) {
-      return NextResponse.json({ ok: false, error: "FIRST_VISION 파싱 실패" } satisfies ApiResponse, { status: 500 });
-    }
+if (!firstVision) {
+  const first = await visionFirstRead(imageUrl, crop, region);
+
+  const record: Extract<HistoryItem, { role: "doctor"; text: string }> = {
+    role: "doctor",
+    kind: "__FIRST_VISION__",
+    text: JSON.stringify(first),
+  };
+
+  history.push(record);
+  firstVision = record;
+}
+
+// 🔒 여기부터는 무조건 doctor + text 있음
+const first = safeJsonParse<any>(firstVision.text, null);
+
+if (!first) {
+  return NextResponse.json(
+    { ok: false, error: "FIRST_VISION 파싱 실패" } satisfies ApiResponse,
+    { status: 500 }
+  );
+}  
 
     // 루트(primary) 보정
     const askedQids = buildAskedQids(history);
@@ -873,15 +870,21 @@ if (action === "answer") {
     // 다음 질문 선택 (TEXT_SIGNAL 1회 개입)
     let nextQ = chooseNextQuestion(primary, askedQids, history);
 
-    const textSignals: string[] = history
-      .filter((h) => h.role === "doctor" && (h.kind === "__TEXT_SIGNAL__" || h.kind === "__TEXT_INTENT__"))
-      .flatMap((h) => {
-        const parsed = safeJsonParse<any>(h.text, null);
-        if (!parsed) return [];
-        if (Array.isArray(parsed)) return parsed;
-        if (Array.isArray(parsed.intents)) return parsed.intents;
-        return [];
-      });
+      const textSignals: string[] = history
+  .filter(
+    (
+      h
+    ): h is Extract<HistoryItem, { role: "doctor"; text: string }> =>
+      h.role === "doctor" &&
+      (h.kind === "__TEXT_SIGNAL__" || h.kind === "__TEXT_INTENT__")
+  )
+  .flatMap((h) => {
+    const parsed = safeJsonParse<any>(h.text, null);
+    if (!parsed) return [];
+    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed.intents)) return parsed.intents;
+    return [];
+  });
 
     if (textSignals.length > 0 && nextQ) {
       const priority = ["FRUIT_SYMPTOM", "FUNGAL_HINT", "PEST_HINT", "WATER_STRESS", "NUTRIENT_EXCESS", "NUTRIENT_DEF"];

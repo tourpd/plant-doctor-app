@@ -87,9 +87,5 @@ function isIgnorableAnswer(v: string) {
 
 // 환경/영양 스트레스 계열 판별
 function isEnvironmentSignal(sig: SignalType) {
-  return (
-    sig === "ENV_STRESS" ||
-    sig === "NUTRIENT_IMBALANCE" ||
-    sig === "WATER_STRESS"
-  );
+  return sig === "MOISTURE_RELATED";
 }

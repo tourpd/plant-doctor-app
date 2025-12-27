@@ -17,6 +17,12 @@ export type Step1Question = {
   text: string;
   choices: Step1ChoiceSignal[];
   priority: number; // 숫자가 낮을수록 먼저 질문
+
+  // ✅ 농부 자유 입력 (선택 사항)
+  free_input?: {
+    placeholder?: string;
+    hint?: string;
+  };
 };
 
 /**

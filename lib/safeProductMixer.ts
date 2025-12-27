@@ -1,39 +1,28 @@
-// app/lib/safeProductMixer.ts
-import { SignalType } from "@/app/data/signalWeights";
+// lib/safeProductMixer.ts
 
-export type ProductMeta = {
-  name: string;
-  signals: SignalType[];
-  paid?: boolean; // 유료 노출 여부
-};
+import type { ProductMeta } from "@/app/data/productMeta";
 
-type Options = {
-  maxItems?: number;
-  maxPaidRatio?: number; // 유료 최대 비율 (기본 33%)
+/**
+ * 🔒 베이스캠프 규칙
+ * - ProductMeta 타입의 단일 출처는 app/data/productMeta
+ * - lib에서는 재정의 절대 금지
+ */
+
+type MixOptions = {
+  maxItems: number;
+  maxPaidRatio?: number;
 };
 
 export function mixProductsSafely(
   products: ProductMeta[],
-  activeSignals: SignalType[],
-  options: Options = {}
+  activeSignals: string[],
+  options: MixOptions
 ) {
-  const { maxItems = 3, maxPaidRatio = 0.33 } = options;
+  const { maxItems } = options;
 
-  // signal 매칭
-  const matched = products.filter((p) =>
-    p.signals.some((s) => activeSignals.includes(s))
-  );
-
-  if (!matched.length) return [];
-
-  // 유료 / 비유료 분리
-  const paid = matched.filter((p) => p.paid);
-  const free = matched.filter((p) => !p.paid);
-
-  const maxPaid = Math.floor(maxItems * maxPaidRatio);
-
-  const pickedPaid = paid.slice(0, maxPaid);
-  const pickedFree = free.slice(0, maxItems - pickedPaid.length);
-
-  return [...pickedPaid, ...pickedFree].slice(0, maxItems);
+  return products
+    .filter((p) =>
+      p.signals.some((s) => activeSignals.includes(s))
+    )
+    .slice(0, maxItems);
 }

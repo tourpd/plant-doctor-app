@@ -238,12 +238,37 @@ const FORM_119_URL =
   };
 
   // ✅ 버튼 눌렀을 때 “진단 중”이 질문 카드에도 남아있게
-  const Spinner = () => (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div className="whirl" />
-      <div style={{ fontWeight: 900, color: "#ffd400" }}>{loading ? "진단 중… 잠시만요" : phaseText}</div>
+  type SpinnerProps = {
+  loading: boolean;
+  phaseText: string;
+};
+
+const Spinner = ({ loading, phaseText }: SpinnerProps) => (
+  <div
+    style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 10,
+      marginTop: 8,
+      marginBottom: 14, // ✅ 다음 버튼과 간격 확보 (모바일 핵심)
+      lineHeight: 1.4,
+    }}
+  >
+    <div className="whirl" />
+    <div
+      style={{
+        fontWeight: 900,
+        color: "#ffd400",
+        fontSize: 15,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {loading ? "진단 중… 잠시만요" : phaseText}
     </div>
-  );
+  </div>
+);
+
 
   return (
     <main
@@ -318,7 +343,7 @@ const FORM_119_URL =
                 alt="preview"
                 style={{
                   width: "100%",
-                  height: 170,
+                  height: 200,
                   objectFit: "cover",
                   display: "block",
                 }}
@@ -384,11 +409,7 @@ const FORM_119_URL =
               border: "1px solid #222",
             }}
           >
-            {/* ✅ 질문 카드에서도 “진단 중” 체감 */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-              <Spinner />
-              <div style={{ color: "#aaa", fontWeight: 900, fontSize: 13 }}>{progressText}</div>
-            </div>
+
 
             <div style={{ marginTop: 10, fontWeight: 900, color: "#00ff88" }}>
               🌿 작물 추정: {api.crop_guess?.name || "미상"}{" "}
@@ -410,7 +431,12 @@ const FORM_119_URL =
             <div style={{ marginTop: 10, color: "#ffd400", fontWeight: 900, whiteSpace: "pre-line", lineHeight: 1.55 }}>
               {api.doctor_note}
             </div>
-
+                   {/* 🌀 진단 중 표시 – 질문 바로 위 */}
+            {loading && (
+              <div style={{ marginTop: 18, marginBottom: 9 }}>
+                <Spinner loading={loading} phaseText={phaseText} />
+              </div>
+            )}
             {/* 질문 */}
             <div style={{ marginTop: 14, fontSize: 18, fontWeight: 900, lineHeight: 1.35 }}>
               <span style={{ color: "#ff4444" }}>❓</span> {api.question.text}
@@ -422,6 +448,7 @@ const FORM_119_URL =
                 ※ 복수 선택 가능합니다.
               </div>
             )}
+            
 
             {/* 선택지 / FREE_TEXT */}
             {api.question.kind === "FREE_TEXT" ? (
@@ -433,6 +460,12 @@ const FORM_119_URL =
                   placeholder="예) 어제부터 갑자기 번짐 / 약 치고 더 심해짐 / 물을 많이 줬음 / 바이러스 같아 보임…"
                   style={textAreaStyle}
                 />
+                  {/* 🌀 진단 중 표시 – 질문 바로 위 */}
+            {loading && (
+              <div style={{ marginTop: 18, marginBottom: 9 }}>
+                <Spinner loading={loading} phaseText={phaseText} />
+              </div>
+            )}
                 <button onClick={submit} disabled={loading || freeText.trim().length === 0} style={primaryBtn(freeText.trim().length === 0)}>
                   다음 →
                 </button>
@@ -480,7 +513,7 @@ const FORM_119_URL =
                     style={textAreaStyle}
                   />
                 )}
-
+                
                 <button
                   onClick={submit}
                   disabled={loading || selected.length === 0}

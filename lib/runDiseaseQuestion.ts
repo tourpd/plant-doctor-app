@@ -4,12 +4,19 @@ type HistoryItem =
   | { role: "doctor"; text: string }
   | { role: "farmer"; qid: string; answer: string | string[] };
 
-function getAnswer(history: HistoryItem[], qid: string): string | null {
-  const h = history.find(x => x.role === "farmer" && x.qid === qid);
+
+function getAnswer(
+  history: HistoryItem[],
+  qid: string
+): string | null {
+  const h = history.find(
+    (x): x is Extract<HistoryItem, { role: "farmer" }> =>
+      x.role === "farmer" && (x as any).qid === qid
+  );
+
   if (!h) return null;
   return Array.isArray(h.answer) ? h.answer[0] : h.answer;
 }
-
 export function getNextDiseaseQuestion({
   parsed,
   history,

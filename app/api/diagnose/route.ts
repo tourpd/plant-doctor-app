@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
+import { db, storage } from "@/lib/firebase";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
@@ -15,17 +19,30 @@ export async function POST(req: Request) {
       );
     }
 
+    /* =========================
+       1️⃣ 사진 Storage 저장 (무조건)
+    ========================= */
     const buffer = Buffer.from(await image.arrayBuffer());
-    const base64 = buffer.toString("base64");
+    const filename = `${Date.now()}_${image.name || "image.jpg"}`;
+    const imageRef = ref(storage, `uploads/${filename}`);
 
+    await uploadBytes(imageRef, buffer, {
+      contentType: image.type || "image/jpeg",
+    });
+
+    const imageUrl = await getDownloadURL(imageRef);
+
+    /* =========================
+       2️⃣ OpenAI STEP1 내부 분석 (Responses API)
+    ========================= */
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY!,
     });
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const response = await openai.responses.create({
+      model: "gpt-4.1-mini",
       temperature: 0.3,
-      messages: [
+      input: [
         {
           role: "system",
           content: `
@@ -41,22 +58,39 @@ export async function POST(req: Request) {
         {
           role: "user",
           content: [
-            { type: "text", text: "이 사진을 내부 분석용으로만 관찰해라" },
+            { type: "input_text", text: "이 사진을 내부 분석용으로만 관찰해라" },
             {
-              type: "image_url",
-              image_url: {
-                url: `data:image/jpeg;base64,${base64}`,
-              },
+              type: "input_image",
+              image_url: imageUrl, detail: "auto",// ✅ base64 대신 Storage URL 사용
             },
           ],
         },
       ],
     });
 
+    const analysisNotes =
+      response.output_text ||
+      "";
+
+    /* =========================
+       3️⃣ Firestore 기록 저장 (핵심 자산)
+    ========================= */
+    await addDoc(collection(db, "diagnosis_records"), {
+      imageUrl,
+      analysisNotes,
+      step: "STEP1",
+      createdAt: serverTimestamp(),
+      source: "user",
+    });
+
+    /* =========================
+       4️⃣ 응답 반환
+    ========================= */
     return NextResponse.json({
       ok: true,
       step: "STEP1",
-      analysis_notes: completion.choices[0].message.content,
+      analysis_notes: analysisNotes,
+      imageUrl,
     });
   } catch (e) {
     console.error("STEP1 분석 실패:", e);

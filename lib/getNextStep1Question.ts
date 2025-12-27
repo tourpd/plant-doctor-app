@@ -18,8 +18,9 @@ export function getNextStep1Question(history: Step1HistoryAnswer[]): Step1Questi
   if ((history?.length || 0) >= TARGET) return null;
 
   return {
-    id: next.id,
-    text: next.text,
-    choices: next.choices.map((c) => c.choice),
-  };
+  id: next.id,
+  text: next.text,
+  choices: next.choices,
+  priority: next.priority,
+};
 }
