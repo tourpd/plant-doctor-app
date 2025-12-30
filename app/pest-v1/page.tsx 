@@ -1,0 +1,103 @@
+"use client";
+
+import { useState } from "react";
+
+export default function PestV1Page() {
+  const [step, setStep] = useState(0);
+  const [image, setImage] = useState<File | null>(null);
+  const [farmerNote, setFarmerNote] = useState("");
+  const [answer, setAnswer] = useState("");
+
+  return (
+    <main style={{ padding: 20, maxWidth: 420, margin: "0 auto" }}>
+      {/* STEP 0: 사진 */}
+      {step === 0 && (
+        <div>
+          <h3>📷 사진 1장 업로드</h3>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) {
+                setImage(f);
+                setStep(1);
+              }
+            }}
+          />
+        </div>
+      )}
+
+      {/* STEP 1: 농민 소견 */}
+      {step === 1 && (
+        <div>
+          <h3>🧑‍🌾 농민 소견 (필수)</h3>
+          <textarea
+            placeholder="언제부터, 어디에, 얼마나 보였는지 적어주세요"
+            value={farmerNote}
+            onChange={(e) => setFarmerNote(e.target.value)}
+            style={{ width: "100%", height: 100 }}
+          />
+          <br />
+          <button
+            disabled={farmerNote.trim().length === 0}
+            onClick={() => setStep(2)}
+          >
+            다음
+          </button>
+        </div>
+      )}
+
+      {/* STEP 2: 질문 */}
+      {step === 2 && (
+        <div>
+          <h3>❓ 추가 질문</h3>
+          <p>잎 뒷면에 벌레가 보이나요?</p>
+          <button
+            onClick={() => {
+              setAnswer("보인다");
+              setStep(3);
+            }}
+          >
+            보인다
+          </button>
+          <button
+            onClick={() => {
+              setAnswer("안 보인다");
+              setStep(3);
+            }}
+          >
+            안 보인다
+          </button>
+        </div>
+      )}
+
+      {/* STEP 3: 결과 */}
+      {step === 3 && (
+        <div>
+          <h3>📌 최종 판단</h3>
+          <p>
+            {answer === "보인다"
+              ? "진딧물 등 해충 가능성이 매우 높습니다."
+              : "초기 해충 가능성이 있습니다. 확대 관찰이 필요합니다."}
+          </p>
+
+          <h4>🚜 지금 바로 할 것</h4>
+          <ul>
+            <li>잎 뒷면 집중 관찰</li>
+            <li>해충 방제 여부 준비</li>
+          </ul>
+
+          <h4>⛔ 지금은 하지 말 것</h4>
+          <ul>
+            <li>강한 약제 연속 살포</li>
+          </ul>
+
+          <button onClick={() => location.reload()}>
+            다시 진단하기
+          </button>
+        </div>
+      )}
+    </main>
+  );
+}

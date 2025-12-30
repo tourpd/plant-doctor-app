@@ -1,0 +1,113 @@
+// app/api/pest-v1/route.ts
+import { NextResponse } from "next/server";
+import OpenAI from "openai";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+function json(data: any, status = 200) {
+  return NextResponse.json(data, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
+async function fileToDataUrl(file: File) {
+  const buf = Buffer.from(await file.arrayBuffer());
+  return `data:${file.type || "image/jpeg"};base64,${buf.toString("base64")}`;
+}
+
+export async function POST(req: Request) {
+  try {
+    const form = await req.formData();
+    const action = (form.get("action") as string) || "start";
+    const image = form.get("image") as File | null;
+    if (!image) return json({ ok: false, error: "image 없음" }, 400);
+
+    if (action === "start") {
+      return json({
+        ok: true,
+        phase: "QUESTION",
+        questions: [
+          {
+            id: "q1",
+            text: "잎을 톡 치면 아주 작은 벌레가 흩어지듯 날아오르나요?",
+            choices: ["예", "아니오", "잘 모르겠음"],
+            require_text: true,
+            placeholder: "예: 잎 뒷면에 점처럼 보입니다",
+          },
+          {
+            id: "q2",
+            text: "최근 새로 나온 잎에서 말림·끈적임·변색이 있었나요?",
+            choices: ["있다", "없다", "잘 모르겠다"],
+            require_text: true,
+            placeholder: "예: 새순이 끈적이고 검은 점이 보입니다",
+          },
+        ],
+      });
+    }
+
+    const answers = JSON.parse((form.get("answers") as string) || "{}");
+    const notes = JSON.parse((form.get("notes") as string) || "{}");
+
+    const imageUrl = await fileToDataUrl(image);
+
+    const system = `
+당신은 농민에게 '관리 단계 판단'만 제공하는 해충 보조자입니다.
+확정 진단 금지. 과장 금지. 반드시 행동 기준을 제시합니다.
+출력은 JSON 단일 객체만.
+`.trim();
+
+    const user = `
+농민 답변:
+${JSON.stringify(answers, null, 2)}
+
+농민 소견:
+${JSON.stringify(notes, null, 2)}
+`.trim();
+
+    const res = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: user },
+            { type: "image_url", image_url: { url: imageUrl } },
+          ] as any,
+        },
+      ],
+    });
+
+    const out = JSON.parse(res.choices[0].message.content || "{}");
+
+    return json({
+      ok: true,
+      phase: "FINAL",
+      judgement:
+        out.judgement ||
+        "사진과 농민 소견을 종합하면 해충 피해 가능성이 열려 있는 단계입니다.",
+      actions: {
+        doNow:
+          out.doNow || [
+            "새순과 잎 뒷면을 집중 관찰",
+            "피해 잎 위치 표시",
+            "2~3일 변화 기록",
+          ],
+        doNot:
+          out.doNot || ["증거 없이 약제 선사용", "여러 약제 혼합"],
+        mustCheck:
+          out.mustCheck || ["아침 시간대 벌레 움직임", "끈적임 여부"],
+      },
+      followup:
+        "이런 문제는 하루 만에 끝나지 않습니다. 2~3일 후 같은 자리에서 다시 사진을 올려주세요.",
+    });
+  } catch (e: any) {
+    return json({ ok: false, error: e.message }, 500);
+  }
+}

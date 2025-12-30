@@ -1,182 +1,106 @@
 // app/api/vision/route.ts
-// @ts-nocheck
+
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
-import { initializeApp, getApps, cert } from "firebase-admin/app";
-import { getStorage } from "firebase-admin/storage";
-import { getFirestore } from "firebase-admin/firestore";
-
 export const runtime = "nodejs";
 
-/* ===============================
-   Firebase Admin
-================================ */
-if (!getApps().length) {
-  initializeApp({
-    credential: cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-    }),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-  });
-}
-
-const bucket = getStorage().bucket();
-const db = getFirestore();
-
-/* ===============================
-   OpenAI
-================================ */
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
 
-/* ===============================
-   🔥 유사사진 DB (실데이터만)
-================================ */
-const CASE_DB = {
-  "고추_탄저병": {
-    summary: "고추 탄저병 초기 증상과 매우 유사합니다.",
-    similarImages: [
-      "https://real.katsv.kr/chili/anthracnose/1.jpg",
-      "https://real.katsv.kr/chili/anthracnose/2.jpg",
-      "https://real.katsv.kr/chili/anthracnose/3.jpg",
-    ],
-    contrastImages: [
-      "https://real.katsv.kr/chili/healthy/leaf.jpg",
-    ],
-    actions: {
-      doNow: [
-        "병든 잎과 과실을 다른 포기와 접촉되지 않게 제거",
-        "관수 시 잎에 물이 닿지 않도록 관리",
-      ],
-      doNot: [
-        "질소·요소 계열 비료 추가 투입",
-        "같은 약제를 연속 살포",
-      ],
-      mustCheck: [
-        "비 온 뒤 확산 여부",
-        "옆 포기 동일 증상 발생 여부",
-      ],
-    },
-    katsv:
-      "https://www.youtube.com/@한국농수산TV/search?query=고추+탄저병",
-  },
+function json(data: any, status = 200) {
+  return NextResponse.json(data, { status });
+}
 
-  "고추_바이러스": {
-    summary: "고추 바이러스 증상과 매우 유사합니다.",
-    similarImages: [
-      "https://real.katsv.kr/chili/virus/1.jpg",
-      "https://real.katsv.kr/chili/virus/2.jpg",
-      "https://real.katsv.kr/chili/virus/3.jpg",
-    ],
-    contrastImages: [
-      "https://real.katsv.kr/chili/anthracnose/leaf.jpg",
-    ],
-    actions: {
-      doNow: [
-        "증상 포기 즉시 격리",
-        "작업 도구 소독",
-      ],
-      doNot: [
-        "약제 남용",
-        "정상 포기와 접촉 작업",
-      ],
-      mustCheck: [
-        "총채벌레 발생 여부",
-        "연속 증상 포기 증가 속도",
-      ],
-    },
-    katsv:
-      "https://www.youtube.com/@한국농수산TV/search?query=고추+바이러스",
-  },
-};
-
-/* ===============================
-   POST
-================================ */
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
-    const image = form.get("image") as File;
 
-    if (!image) {
-      return NextResponse.json({ ok: false, error: "이미지 없음" }, { status: 400 });
-    }
+    const image = form.get("image") as File | null;
+    const crop = (form.get("crop") as string) || "미상";
+    const province = (form.get("province") as string) || "";
+    const city = (form.get("city") as string) || "";
 
-    /* ① 사진 저장 */
+    if (!image) return json({ ok: false, error: "사진이 없습니다." }, 400);
+
+    // 이미지 base64 변환
     const buffer = Buffer.from(await image.arrayBuffer());
-    const filename = `uploads/${Date.now()}-${image.name}`;
-    const file = bucket.file(filename);
-    await file.save(buffer, { contentType: image.type });
-    await file.makePublic();
-    const imageUrl = file.publicUrl();
+    const base64 = buffer.toString("base64");
+    const mime = image.type || "image/jpeg";
+    const imageUrl = `data:${mime};base64,${base64}`;
 
-    /* ② AI 관찰 */
-    const ai = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.2,
-      messages: [
-        {
-          role: "system",
-          content: `
-너는 농업 병해 관찰 AI다.
-병명 단정 금지.
-다음 JSON으로만 응답하라.
+    // ✅ 시스템 프롬프트
+    const system = `
+당신은 작물 병해충, 생리장해, 영양 문제를 진단하는 식물 병리 전문가이며,
+사진으로 진단을 요청한 사람은 농민입니다.
 
+응답은 반드시 아래 JSON 형식으로만 출력하세요.  
+다른 설명, 코드 블럭, 여는 말/닫는 말은 포함하지 마세요.
+
+📌 응답 JSON 형식:
 {
-  "issueKey": "고추_탄저병 | 고추_바이러스 | UNKNOWN",
-  "confidence": 0~1,
-  "observation": "농민이 공감할 관찰 한 줄"
+  "ok": true,
+  "crop": "작물 이름",
+  "region": "도시 또는 시/군 정보",
+  "observations": ["사진에서 보이는 증상 2~4개"],
+  "possible_causes": [
+    {
+      "name": "질병 또는 해충 이름",
+      "probability": 70,
+      "why": "왜 그렇게 판단했는지 설명"
+    },
+    {
+      "name": "다른 가능성",
+      "probability": 30,
+      "why": "그럴 가능성도 있는 이유"
+    }
+  ],
+  "final_judgement": "가장 가능성 높은 문제 이름",
+  "actions": {
+    "doNow": ["지금 해야 할 일 2~3개"],
+    "doNot": ["하지 말아야 할 일 1~2개"],
+    "mustCheck": ["확인해볼 사항들 (흙 상태, 주변 작물 등)"]
+  },
+  "disclaimer": "이 결과는 참고용 AI 분석이며, 최종 판단과 책임은 농업인에게 있습니다.",
+  "emergency_form_url": "https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform"
 }
-          `,
-        },
+
+※ 확률은 반드시 총합 100%로 맞춰서 작성하세요.  
+※ 항상 'disclaimer'와 'emergency_form_url' 필드를 포함하세요.
+    `.trim();
+
+    // 유저 프롬프트
+    const user = `
+작물: ${crop}
+지역: ${province} ${city}
+
+아래 이미지를 보고 위 JSON 형식에 맞춰 결과를 작성해주세요.  
+내용은 반드시 농민이 이해하기 쉬운 쉬운 말로 써 주세요.
+    `.trim();
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
         {
           role: "user",
           content: [
-            { type: "text", text: "이 작물 사진을 관찰하라" },
+            { type: "text", text: user },
             { type: "image_url", image_url: { url: imageUrl } },
-          ],
+          ] as any,
         },
       ],
     });
 
-    const parsed = JSON.parse(ai.choices[0].message.content);
-    const matched = CASE_DB[parsed.issueKey];
+    const output = response.choices[0]?.message?.content || "{}";
+    const data = JSON.parse(output);
 
-    /* ③ 기록 저장 */
-    await db.collection("diagnosis_records").add({
-      imageUrl,
-      ai: parsed,
-      createdAt: new Date(),
-    });
-
-    /* ④ 농민용 결과 반환 */
-    return NextResponse.json({
-      ok: true,
-
-      summary: matched?.summary || "유사 사례를 더 확인해야 합니다.",
-      confidence: parsed.confidence,
-      observation: parsed.observation,
-
-      similarImages: matched?.similarImages || [],
-      contrastImages: matched?.contrastImages || [],
-
-      actions: matched?.actions || null,
-
-      links: {
-        katsv: matched?.katsv || "https://www.youtube.com/@한국농수산TV",
-        emergency119:
-          "https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform",
-      },
-    });
+    return json(data);
   } catch (e: any) {
-    console.error(e);
-    return NextResponse.json(
-      { ok: false, error: "서버 오류" },
-      { status: 500 }
-    );
+    console.error("❌ Vision API 오류:", e);
+    return json({ ok: false, error: e?.message || "서버 오류 발생" }, 500);
   }
 }
