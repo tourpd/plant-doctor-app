@@ -1,5 +1,3 @@
-// app/admin/page.tsx
-
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -19,13 +17,23 @@ type Diagnosis = {
 export default function AdminPage() {
   const [data, setData] = useState<Diagnosis[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
-      const res = await fetch('/api/admin/diagnoses');
-      const json = await res.json();
-      setData(json);
-      setLoading(false);
+      try {
+        const res = await fetch('/api/admin/diagnoses');
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        const json = await res.json();
+        setData(json);
+      } catch (e: any) {
+        console.error('❌ 관리자 진단 기록 가져오기 실패:', e);
+        setError(e.message || '알 수 없는 오류');
+      } finally {
+        setLoading(false);
+      }
     };
 
     fetchData();
@@ -39,6 +47,10 @@ export default function AdminPage() {
 
       {loading ? (
         <p>불러오는 중...</p>
+      ) : error ? (
+        <p style={{ color: 'red' }}>❌ 오류 발생: {error}</p>
+      ) : data.length === 0 ? (
+        <p>진단 기록이 없습니다.</p>
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
