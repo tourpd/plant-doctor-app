@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import '@/app/globals.css';
 
 type ApiResult = {
   ok: true;
@@ -30,6 +31,23 @@ export default function AiPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ApiResult | ApiFail | null>(null);
 
+  const resultRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const savedCrop = localStorage.getItem('crop');
+    const savedProvince = localStorage.getItem('province');
+    const savedCity = localStorage.getItem('city');
+    if (savedCrop) setCrop(savedCrop);
+    if (savedProvince) setProvince(savedProvince);
+    if (savedCity) setCity(savedCity);
+  }, []);
+
+  useEffect(() => {
+    if (result && result.ok && resultRef.current) {
+      resultRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [result]);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (f) {
@@ -44,6 +62,10 @@ export default function AiPage() {
       alert('사진, 작물명, 도, 시/군 정보를 모두 입력해 주세요.');
       return;
     }
+
+    localStorage.setItem('crop', crop);
+    localStorage.setItem('province', province);
+    localStorage.setItem('city', city);
 
     setLoading(true);
     const fd = new FormData();
@@ -68,66 +90,56 @@ export default function AiPage() {
 
   return (
     <main style={{ maxWidth: 640, margin: '0 auto', padding: 20, textAlign: 'center' }}>
-  {/* ✅ 상단 제목 + 소개 */}
-  <h1 style={{ fontSize: 32, fontWeight: 'bold', color: '#2e7d32', marginBottom: 8 }}>
-    🌱 포토닥터 진단
-  </h1>
-  <p style={{ marginTop: 0, fontSize: 15, color: '#555' }}>
-    한국농수산TV가 농민을 위해 만든 AI 병해충·생리장해 진단 서비스입니다.
+      <h1 style={{ fontSize: 32, fontWeight: 'bold', color: '#2e7d32', marginBottom: 8 }}>
+        🌱 포토닥터 진단
+      </h1>
+      <p style={{ marginTop: 0, fontSize: 15, color: '#fbc02d' }}>
+        한국농수산TV가 농민을 위해 만든 AI 병해충·생리장해 진단 서비스입니다.
       </p>
 
-      {/* 입력 */}
       <div style={{ marginTop: 24 }}>
-        <input
-          type="text"
-          placeholder="작물명 (예: 고추)"
-          value={crop}
-          onChange={(e) => setCrop(e.target.value)}
-          style={inputStyle}
-        />
-        <input
-          type="text"
-          placeholder="도 (예: 충남)"
-          value={province}
-          onChange={(e) => setProvince(e.target.value)}
-          style={inputStyle}
-        />
-        <input
-          type="text"
-          placeholder="시/군 (예: 홍성군)"
-          value={city}
-          onChange={(e) => setCity(e.target.value)}
-          style={inputStyle}
-        />
+        <input type="text" placeholder="작물명 (예: 고추)" value={crop} onChange={(e) => setCrop(e.target.value)} style={inputStyle} />
+        <input type="text" placeholder="도 (예: 충남)" value={province} onChange={(e) => setProvince(e.target.value)} style={inputStyle} />
+        <input type="text" placeholder="시/군 (예: 홍성군)" value={city} onChange={(e) => setCity(e.target.value)} style={inputStyle} />
+
+        <p style={{ fontSize: 13, color: '#888', marginTop: 6 }}>
+          입력하신 작물과 지역 정보는 자동 저장되어 다음 진단부터 자동 입력됩니다.
+        </p>
 
         <label htmlFor="file" style={fileUploadLabel}>
           📷 <strong>사진 선택 (1장)</strong>
-          <p style={{ fontSize: 13, marginTop: 8, color: '#666' }}>
-            이미 찍은 사진을 선택해 주세요.
-          </p>
+          <p style={{ fontSize: 13, marginTop: 8, color: '#666' }}>이미 찍은 사진을 선택해 주세요.</p>
         </label>
 
-        <input
-          type="file"
-          id="file"
-          accept="image/*"
-          onChange={handleFileChange}
-          style={{ display: 'none' }}
-        />
+        <input type="file" id="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
 
+        {/* ✅ 이미지 미리보기 + 스피너 오버레이 */}
         {preview && (
-          <img
-            src={preview}
-            alt="미리보기"
-            style={{
-              marginTop: 16,
-              width: '100%',
-              maxHeight: 300,
-              objectFit: 'contain',
-              border: '1px solid #ccc',
-              borderRadius: 8,
-            }}
-          />
+          <div style={{ position: 'relative', marginTop: 16 }}>
+            <img
+              src={preview}
+              alt="미리보기"
+              style={{
+                width: '100%',
+                maxHeight: 300,
+                objectFit: 'contain',
+                border: '1px solid #ccc',
+                borderRadius: 8,
+              }}
+            />
+            {loading && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                }}
+              >
+                <div className="spinner" />
+              </div>
+            )}
+          </div>
         )}
 
         <button onClick={submit} disabled={loading} style={btnStyle}>
@@ -135,32 +147,21 @@ export default function AiPage() {
         </button>
       </div>
 
-      {/* 결과 */}
       {result && result.ok && (
-        <div style={resultBox}>
+        <div ref={resultRef} style={resultBox}>
           <h2 style={sectionTitle}>👀 관찰 결과</h2>
           <p>
             🌾 작물: <strong>{result.crop}</strong> / 지역: <strong>{result.region}</strong>
           </p>
-          <ul>
-            {result.observations.map((o, i) => (
-              <li key={i}>• {o}</li>
-            ))}
-          </ul>
+          <ul>{result.observations.map((o, i) => <li key={i}>• {o}</li>)}</ul>
 
           <h3 style={sectionTitle}>🧭 원인 가능성</h3>
-          <ul>
-            {result.possible_causes.map((c, i) => (
-              <li key={i}>
-                <strong>{c.name}</strong> 가능성 {c.probability}% - {c.why}
-              </li>
-            ))}
-          </ul>
+          <ul>{result.possible_causes.map((c, i) => (
+            <li key={i}><strong>{c.name}</strong> 가능성 {c.probability}% - {c.why}</li>
+          ))}</ul>
 
           <h3 style={sectionTitle}>📌 최종 판단</h3>
-          <p style={{ fontWeight: 'bold', color: '#c62828' }}>
-            {result.final_judgement}
-          </p>
+          <p style={{ fontWeight: 'bold', color: '#c62828' }}>{result.final_judgement}</p>
 
           <h3 style={sectionTitle}>✅ 지금 해야 할 것</h3>
           <ul>{result.actions.doNow.map((t, i) => <li key={i}>• {t}</li>)}</ul>
@@ -171,12 +172,10 @@ export default function AiPage() {
           <h3 style={sectionTitle}>🔍 반드시 확인</h3>
           <ul>{result.actions.mustCheck.map((t, i) => <li key={i}>• {t}</li>)}</ul>
 
-          {/* 면책 문구 */}
           <p style={{ marginTop: 20, fontSize: 14, color: '#888' }}>
             ⚠️ 이 결과는 AI의 참고 진단이며, 최종 판단은 농업인 본인의 책임입니다.
           </p>
 
-          {/* 119 출동 요청 버튼 */}
           <a
             href="https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform"
             target="_blank"
@@ -197,7 +196,7 @@ export default function AiPage() {
   );
 }
 
-// ✅ 스타일 객체는 함수 밖에서도 가능
+// 스타일 정의
 const inputStyle: React.CSSProperties = {
   display: 'block',
   width: '100%',
@@ -206,6 +205,8 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 6,
   border: '1px solid #ccc',
   fontSize: 16,
+  color: '#333',
+  fontWeight: 'bold',
 };
 
 const fileUploadLabel: React.CSSProperties = {

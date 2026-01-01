@@ -7,8 +7,9 @@ if (!admin.apps.length) {
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
     }),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET, // ⭐️ 여기
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
   });
 }
 
-export const bucket = admin.storage().bucket();
+// ✅ 명시적으로 버킷 이름 지정
+export const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET);

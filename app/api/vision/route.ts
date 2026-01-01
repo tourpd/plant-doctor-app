@@ -1,13 +1,47 @@
 // app/api/vision/route.ts
-
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
+import { v4 as uuidv4 } from "uuid";
 
 export const runtime = "nodejs";
+export const dynamic = 'force-dynamic';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
+
+// ✅ Firebase 초기화 (1회만)
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
+
+if (!getApps().length) {
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'); // ← 핵심
+
+  console.log('🔐 projectId:', process.env.FIREBASE_PROJECT_ID);
+  console.log('🔐 clientEmail:', process.env.FIREBASE_CLIENT_EMAIL);
+  console.log('🔐 privateKey (starts with):', privateKey?.slice(0, 30));
+
+  console.log('✅ Parsed key lines:', privateKey?.split('\n').length);
+  console.log('✅ Parsed key preview:\n', privateKey?.slice(0, 100));
+  console.log('📦 bucket name:', process.env.FIREBASE_STORAGE_BUCKET)
+  console.log("✅ storageBucket:", process.env.FIREBASE_STORAGE_BUCKET);
+  console.log("🔥 FIREBASE_STORAGE_BUCKET = ", process.env.FIREBASE_STORAGE_BUCKET);
+  console.log("📦 버킷 이름 확인:", process.env.FIREBASE_STORAGE_BUCKET);
+  console.log("🔥 storageBucket =", process.env.FIREBASE_STORAGE_BUCKET);
+  
+
+  initializeApp({
+    credential: cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey,
+    }),
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  });
+}
+const db = getFirestore();
+const bucket = getStorage().bucket(process.env.FIREBASE_STORAGE_BUCKET);
 
 function json(data: any, status = 200) {
   return NextResponse.json(data, { status });
@@ -24,21 +58,21 @@ export async function POST(req: Request) {
 
     if (!image) return json({ ok: false, error: "사진이 없습니다." }, 400);
 
-    // 이미지 base64 변환
+    // ✅ 이미지 → Buffer → base64
     const buffer = Buffer.from(await image.arrayBuffer());
-    const base64 = buffer.toString("base64");
     const mime = image.type || "image/jpeg";
+    const base64 = buffer.toString("base64");
     const imageUrl = `data:${mime};base64,${base64}`;
 
-    // ✅ 시스템 프롬프트
+    // ✅ GPT 프롬프트
     const system = `
-당신은 작물 병해충, 생리장해, 영양 문제를 진단하는 식물 병리 전문가이며,
+당신은 작물 병해충, 생리장해, 영양 문제를 진단하는 식물 병리 전문가입니다.
 사진으로 진단을 요청한 사람은 농민입니다.
 
 응답은 반드시 아래 JSON 형식으로만 출력하세요.  
 다른 설명, 코드 블럭, 여는 말/닫는 말은 포함하지 마세요.
 
-📌 응답 JSON 형식:
+📌 응답 형식:
 {
   "ok": true,
   "crop": "작물 이름",
@@ -65,20 +99,18 @@ export async function POST(req: Request) {
   "disclaimer": "이 결과는 참고용 AI 분석이며, 최종 판단과 책임은 농업인에게 있습니다.",
   "emergency_form_url": "https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform"
 }
+※ 확률은 반드시 총합 100%로 맞춰주세요.
+`.trim();
 
-※ 확률은 반드시 총합 100%로 맞춰서 작성하세요.  
-※ 항상 'disclaimer'와 'emergency_form_url' 필드를 포함하세요.
-    `.trim();
-
-    // 유저 프롬프트
     const user = `
 작물: ${crop}
 지역: ${province} ${city}
 
-아래 이미지를 보고 위 JSON 형식에 맞춰 결과를 작성해주세요.  
+아래 이미지를 보고 위 JSON 형식에 맞춰 진단 결과를 작성해주세요.  
 내용은 반드시 농민이 이해하기 쉬운 쉬운 말로 써 주세요.
-    `.trim();
+`.trim();
 
+    // ✅ GPT 호출
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       temperature: 0.3,
@@ -98,7 +130,32 @@ export async function POST(req: Request) {
     const output = response.choices[0]?.message?.content || "{}";
     const data = JSON.parse(output);
 
-    return json(data);
+    // ✅ 이미지 Storage 저장
+    const fileName = `uploads/${uuidv4()}.${mime.split("/")[1]}`;
+    await bucket.file(fileName).save(buffer, {
+      metadata: {
+        contentType: mime,
+      },
+    });
+    const imageStorageUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+
+    // ✅ Firestore에 진단 정보 저장
+    const docRef = await db.collection("diagnoses").add({
+      createdAt: new Date(),
+      crop,
+      province,
+      city,
+      region: `${province} ${city}`,
+      result: data,
+      imagePath: fileName,
+      imageUrl: imageStorageUrl,
+    });
+
+    console.log("✅ Firestore 저장 완료:", docRef.id);
+
+    // ✅ 결과 반환
+    return json({ ...data, imageUrl: imageStorageUrl });
+
   } catch (e: any) {
     console.error("❌ Vision API 오류:", e);
     return json({ ok: false, error: e?.message || "서버 오류 발생" }, 500);
