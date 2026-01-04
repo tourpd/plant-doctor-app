@@ -1,0 +1,1 @@
+export const sunburnKeywords = ['일소', '햇볕', '고온장해', '환경장해', '빛데임', '햇빛 데임'];

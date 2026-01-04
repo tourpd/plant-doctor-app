@@ -3,6 +3,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import '@/app/globals.css';
 
+// ✅ 자재 추천 함수 임포트
+import { getRecommendation } from '../api/vision/utils/recommendMaterial';
+
 type ApiResult = {
   ok: true;
   crop: string;
@@ -89,11 +92,11 @@ export default function AiPage() {
   };
 
   return (
-    <main style={{ maxWidth: 640, margin: '0 auto', padding: 20, textAlign: 'center' }}>
-      <h1 style={{ fontSize: 32, fontWeight: 'bold', color: '#2e7d32', marginBottom: 8 }}>
+    <main style={{ maxWidth: 640, margin: '0 auto', padding: 20 }}>
+      <h1 style={{ fontSize: 32, fontWeight: 'bold', color: '#2e7d32', marginBottom: 8, textAlign: 'center' }}>
         🌱 포토닥터 진단
       </h1>
-      <p style={{ marginTop: 0, fontSize: 15, color: '#fbc02d' }}>
+      <p style={{ marginTop: 0, fontSize: 15, color: '#fbc02d', textAlign: 'center' }}>
         한국농수산TV가 농민을 위해 만든 AI 병해충·생리장해 진단 서비스입니다.
       </p>
 
@@ -102,7 +105,7 @@ export default function AiPage() {
         <input type="text" placeholder="도 (예: 충남)" value={province} onChange={(e) => setProvince(e.target.value)} style={inputStyle} />
         <input type="text" placeholder="시/군 (예: 홍성군)" value={city} onChange={(e) => setCity(e.target.value)} style={inputStyle} />
 
-        <p style={{ fontSize: 13, color: '#888', marginTop: 6 }}>
+        <p style={{ fontSize: 13, color: '#888', marginTop: 6, textAlign: 'center' }}>
           입력하신 작물과 지역 정보는 자동 저장되어 다음 진단부터 자동 입력됩니다.
         </p>
 
@@ -113,7 +116,6 @@ export default function AiPage() {
 
         <input type="file" id="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
 
-        {/* ✅ 이미지 미리보기 + 스피너 오버레이 */}
         {preview && (
           <div style={{ position: 'relative', marginTop: 16 }}>
             <img
@@ -149,30 +151,67 @@ export default function AiPage() {
 
       {result && result.ok && (
         <div ref={resultRef} style={resultBox}>
-          <h2 style={sectionTitle}>👀 관찰 결과</h2>
-          <p>
-            🌾 작물: <strong>{result.crop}</strong> / 지역: <strong>{result.region}</strong>
-          </p>
-          <ul>{result.observations.map((o, i) => <li key={i}>• {o}</li>)}</ul>
+          <div style={{ textAlign: 'left' }}>
+            <h2 style={sectionTitle}>👀 관찰 결과</h2>
+            <p>🌾 작물: <strong>{result.crop}</strong> / 지역: <strong>{result.region}</strong></p>
+            <ul>{result.observations.map((o, i) => <li key={i}>• {o}</li>)}</ul>
 
-          <h3 style={sectionTitle}>🧭 원인 가능성</h3>
-          <ul>{result.possible_causes.map((c, i) => (
-            <li key={i}><strong>{c.name}</strong> 가능성 {c.probability}% - {c.why}</li>
-          ))}</ul>
+            <h3 style={sectionTitle}>🧭 원인 가능성</h3>
+            <ul>{result.possible_causes.map((c, i) => (
+              <li key={i}><strong>{c.name}</strong> 가능성 {c.probability}% - {c.why}</li>
+            ))}</ul>
 
-          <h3 style={sectionTitle}>📌 최종 판단</h3>
-          <p style={{ fontWeight: 'bold', color: '#c62828' }}>{result.final_judgement}</p>
+            <h3 style={sectionTitle}>📌 최종 판단</h3>
+            <p style={{ fontWeight: 'bold', color: '#c62828' }}>{result.final_judgement}</p>
 
-          <h3 style={sectionTitle}>✅ 지금 해야 할 것</h3>
-          <ul>{result.actions.doNow.map((t, i) => <li key={i}>• {t}</li>)}</ul>
+            <h3 style={sectionTitle}>✅ 지금 해야 할 것</h3>
+            <ul>{result.actions.doNow.map((t, i) => <li key={i}>• {t}</li>)}</ul>
 
-          <h3 style={sectionTitle}>⛔ 하지 말 것</h3>
-          <ul>{result.actions.doNot.map((t, i) => <li key={i}>• {t}</li>)}</ul>
+            <h3 style={sectionTitle}>⛔ 하지 말 것</h3>
+            <ul>{result.actions.doNot.map((t, i) => <li key={i}>• {t}</li>)}</ul>
 
-          <h3 style={sectionTitle}>🔍 반드시 확인</h3>
-          <ul>{result.actions.mustCheck.map((t, i) => <li key={i}>• {t}</li>)}</ul>
+            <h3 style={sectionTitle}>🔍 반드시 확인</h3>
+            <ul>{result.actions.mustCheck.map((t, i) => <li key={i}>• {t}</li>)}</ul>
+          </div>
 
-          <p style={{ marginTop: 20, fontSize: 14, color: '#888' }}>
+          {/* ✅ 자재 추천 정보 */}
+          {(() => {
+            const recommendation = getRecommendation(result.final_judgement);
+            if (!recommendation) return null;
+
+            return (
+              <div style={{ marginTop: 32, textAlign: 'left' }}>
+                <h3 style={{ ...sectionTitle, color: '#33691e' }}>🧪 자재 추천</h3>
+                <p style={{ whiteSpace: 'pre-line', fontSize: 15, lineHeight: 1.6 }}>
+                  {recommendation.usageGuide}
+                </p>
+                <div style={{ marginTop: 16 }}>
+                  {recommendation.materials?.map((mat, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        marginBottom: 16,
+                        padding: 12,
+                        border: '1px solid #ccc',
+                        borderRadius: 8,
+                        backgroundColor: '#fff',
+                      }}
+                    >
+                      <strong style={{ fontSize: 16 }}>{mat.title}</strong>
+                      {mat.description && <p style={{ marginTop: 4 }}>{mat.description}</p>}
+                      {mat.howToUse && (
+                        <p style={{ marginTop: 6, fontSize: 14 }}>
+                          <strong>👉 사용법:</strong> {mat.howToUse}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          <p style={{ marginTop: 20, fontSize: 14, color: '#888', textAlign: 'center' }}>
             ⚠️ 이 결과는 AI의 참고 진단이며, 최종 판단은 농업인 본인의 책임입니다.
           </p>
 
@@ -196,7 +235,7 @@ export default function AiPage() {
   );
 }
 
-// 스타일 정의
+// 🔧 스타일 정의
 const inputStyle: React.CSSProperties = {
   display: 'block',
   width: '100%',
