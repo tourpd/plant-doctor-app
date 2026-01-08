@@ -105,9 +105,7 @@ export default function AiPage() {
         <input type="text" placeholder="도 (예: 충남)" value={province} onChange={(e) => setProvince(e.target.value)} style={inputStyle} />
         <input type="text" placeholder="시/군 (예: 홍성군)" value={city} onChange={(e) => setCity(e.target.value)} style={inputStyle} />
 
-        <p style={{ fontSize: 13, color: '#888', marginTop: 6, textAlign: 'center' }}>
-          입력하신 작물과 지역 정보는 자동 저장되어 다음 진단부터 자동 입력됩니다.
-        </p>
+    
 
         <label htmlFor="file" style={fileUploadLabel}>
           📷 <strong>사진 선택 (1장)</strong>
