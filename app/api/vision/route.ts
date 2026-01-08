@@ -1,52 +1,43 @@
 // app/api/vision/route.ts
+
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { v4 as uuidv4 } from "uuid";
 
+// ✅ Edge 환경 방지
 export const runtime = "nodejs";
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
+// ✅ OpenAI 설정
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
 
-// ✅ Firebase 초기화 (1회만)
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
+// ✅ Firebase Admin SDK 초기화
+import { initializeApp, cert, getApps } from "firebase-admin/app";
 
 if (!getApps().length) {
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'); // ← 핵심
-
-  console.log('🔐 projectId:', process.env.FIREBASE_PROJECT_ID);
-  console.log('🔐 clientEmail:', process.env.FIREBASE_CLIENT_EMAIL);
-  console.log('🔐 privateKey (starts with):', privateKey?.slice(0, 30));
-
-  console.log('✅ Parsed key lines:', privateKey?.split('\n').length);
-  console.log('✅ Parsed key preview:\n', privateKey?.slice(0, 100));
-  console.log('📦 bucket name:', process.env.FIREBASE_STORAGE_BUCKET)
-  console.log("✅ storageBucket:", process.env.FIREBASE_STORAGE_BUCKET);
-  console.log("🔥 FIREBASE_STORAGE_BUCKET = ", process.env.FIREBASE_STORAGE_BUCKET);
-  console.log("📦 버킷 이름 확인:", process.env.FIREBASE_STORAGE_BUCKET);
-  console.log("🔥 storageBucket =", process.env.FIREBASE_STORAGE_BUCKET);
-  
-
   initializeApp({
     credential: cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
     }),
     storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
   });
 }
+
 const db = getFirestore();
 const bucket = getStorage().bucket(process.env.FIREBASE_STORAGE_BUCKET);
 
+// ✅ JSON 응답 도우미
 function json(data: any, status = 200) {
   return NextResponse.json(data, { status });
 }
 
+// ✅ POST 요청 처리
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
@@ -58,13 +49,12 @@ export async function POST(req: Request) {
 
     if (!image) return json({ ok: false, error: "사진이 없습니다." }, 400);
 
-    // ✅ 이미지 → Buffer → base64
     const buffer = Buffer.from(await image.arrayBuffer());
     const mime = image.type || "image/jpeg";
     const base64 = buffer.toString("base64");
     const imageUrl = `data:${mime};base64,${base64}`;
 
-    // ✅ GPT 프롬프트
+    // ✅ GPT 프롬프트 구성
     const system = `
 당신은 작물 병해충, 생리장해, 영양 문제를 진단하는 식물 병리 전문가입니다.
 사진으로 진단을 요청한 사람은 농민입니다.
@@ -133,13 +123,12 @@ export async function POST(req: Request) {
     // ✅ 이미지 Storage 저장
     const fileName = `uploads/${uuidv4()}.${mime.split("/")[1]}`;
     await bucket.file(fileName).save(buffer, {
-      metadata: {
-        contentType: mime,
-      },
+      metadata: { contentType: mime },
     });
+
     const imageStorageUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
 
-    // ✅ Firestore에 진단 정보 저장
+    // ✅ Firestore 저장
     const docRef = await db.collection("diagnoses").add({
       createdAt: new Date(),
       crop,
@@ -153,7 +142,6 @@ export async function POST(req: Request) {
 
     console.log("✅ Firestore 저장 완료:", docRef.id);
 
-    // ✅ 결과 반환
     return json({ ...data, imageUrl: imageStorageUrl });
 
   } catch (e: any) {
