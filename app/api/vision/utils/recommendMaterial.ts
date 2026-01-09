@@ -28,7 +28,7 @@ export function getRecommendation(judgement: string): MaterialRecommendation | n
       materials: [
         {
           title: '친환경 싹쓰리충',
-          description: '초생재 기반의 천연 살충제',
+          description: '식물로 만든 천연 살충제',
           howToUse: '3일 간격으로 2회 분무, 잎 뒷면 집중',
         },
         {

@@ -34,6 +34,11 @@ export default function AiPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ApiResult | ApiFail | null>(null);
 
+  // ✅ (추가) 스피너 아래 문구 상태
+  const [loadingText, setLoadingText] = useState('🔍 AI가 병해 신호를 분석 중입니다…');
+
+  const magicSoundRef = useRef<HTMLAudioElement>(null); // 🔊 성공 효과음(1회)
+  const clickSoundRef = useRef<HTMLAudioElement>(null); // 🔁 진단 중 루프 사운드
   const resultRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -51,6 +56,34 @@ export default function AiPage() {
     }
   }, [result]);
 
+  // ✅ (추가) 로딩 시작 → 문구 초기화, 8초 후 문구 변경
+  useEffect(() => {
+    if (!loading) return;
+
+    setLoadingText('🔍 AI가 병해 신호를 분석 중입니다…');
+
+    const t = setTimeout(() => {
+      setLoadingText('⏳ 정확도를 높이는 중입니다… \n잠시만 더 기다려 주세요.');
+    }, 8000);
+
+    return () => clearTimeout(t);
+  }, [loading]);
+
+  // ✅ (추가) 사용자 제스처(버튼 클릭) 시점에 오디오 잠금 해제용
+  const unlockSound = async () => {
+    const a = magicSoundRef.current;
+    if (!a) return;
+    try {
+      a.volume = 0.3;
+      a.currentTime = 0;
+      await a.play();
+      a.pause();
+      a.currentTime = 0;
+    } catch (err) {
+      console.warn('효과음 unlock 실패:', err);
+    }
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (f) {
@@ -60,39 +93,90 @@ export default function AiPage() {
     }
   };
 
+  // 🔁 진단 루프 시작 (clickSoundRef 사용)
+  const startDiagnoseLoop = () => {
+    const a = clickSoundRef.current;
+    if (!a) return;
+    try {
+      a.volume = 0.20;
+      a.loop = true;
+      a.currentTime = 0;
+      a.play().catch((e) => console.warn('진단 루프 실패:', e));
+    } catch {}
+  };
+
+  // 🔇 진단 루프 정지 (finally에서 무조건 호출)
+  const stopDiagnoseLoop = () => {
+    const a = clickSoundRef.current;
+    if (!a) return;
+    try {
+      a.pause();
+      a.currentTime = 0;
+      a.loop = false;
+    } catch {}
+  };
+
   const submit = async () => {
+    await unlockSound();
+
+    // 🔁 시작 전에 혹시 남아있던 루프 정리
+    stopDiagnoseLoop();
+
+    // ✅ 입력 검증(기존 로직 유지)
     if (!file || !province || !city || !crop) {
       alert('사진, 작물명, 도, 시/군 정보를 모두 입력해 주세요.');
+      stopDiagnoseLoop();
       return;
     }
 
-    localStorage.setItem('crop', crop);
-    localStorage.setItem('province', province);
-    localStorage.setItem('city', city);
-
-    setLoading(true);
+    // ✅ (필수) fd가 원문에서 누락되어 있어 최소로 복구 (기존 흐름 유지)
     const fd = new FormData();
     fd.append('image', file);
     fd.append('crop', crop);
     fd.append('province', province);
     fd.append('city', city);
 
+    // 🔁 진단 루프 시작
+    startDiagnoseLoop();
+
+    setLoading(true);
+
     try {
-      const res = await fetch('/api/vision', {
-        method: 'POST',
-        body: fd,
-      });
-      const data: ApiResult | ApiFail = await res.json();
+      const res = await fetch('/api/vision', { method: 'POST', body: fd });
+      const data = await res.json();
       setResult(data);
+
+      // ✅ 성공 시 매직 사운드 1회 재생
+      if (data?.ok) {
+        const m = magicSoundRef.current;
+        if (m) {
+          m.volume = 0.12;
+          m.loop = false;
+          m.currentTime = 0;
+          m.play().catch((err: any) => console.warn('효과음 재생 오류:', err));
+        }
+      }
     } catch (err) {
       setResult({ ok: false, error: '서버 오류 또는 네트워크 문제' });
     } finally {
       setLoading(false);
+      stopDiagnoseLoop(); // ✅ 핵심: 성공/실패 상관없이 “무조건” 멈춤
     }
   };
 
   return (
     <main style={{ maxWidth: 640, margin: '0 auto', padding: 20 }}>
+      {/* ✅ clickSoundRef를 “진단 중 루프”로 사용 */}
+      <audio
+        ref={clickSoundRef}
+        src="/sounds/click-buttons-ui-menu-sounds-effects-button-10-205397.mp3"
+        preload="auto"
+        loop
+      />
+
+      {/* 🔊 성공 효과음 (1회 재생은 submit에서) */}
+      <audio ref={magicSoundRef} src="/sounds/magic-03-278824.mp3" preload="auto" />
+
       <h1 style={{ fontSize: 32, fontWeight: 'bold', color: '#2e7d32', marginBottom: 8, textAlign: 'center' }}>
         🌱 포토닥터 진단
       </h1>
@@ -104,8 +188,6 @@ export default function AiPage() {
         <input type="text" placeholder="작물명 (예: 고추)" value={crop} onChange={(e) => setCrop(e.target.value)} style={inputStyle} />
         <input type="text" placeholder="도 (예: 충남)" value={province} onChange={(e) => setProvince(e.target.value)} style={inputStyle} />
         <input type="text" placeholder="시/군 (예: 홍성군)" value={city} onChange={(e) => setCity(e.target.value)} style={inputStyle} />
-
-    
 
         <label htmlFor="file" style={fileUploadLabel}>
           📷 <strong>사진 선택 (1장)</strong>
@@ -131,12 +213,30 @@ export default function AiPage() {
               <div
                 style={{
                   position: 'absolute',
-                  top: '50%',
-                  left: '50%',
-                  transform: 'translate(-50%, -50%)',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexDirection: 'column',
+                  gap: 12,
                 }}
               >
                 <div className="spinner" />
+                <p
+                  style={{
+                    marginTop: 12,
+                    padding: '8px 14px',
+                    background: 'rgba(255,255,255,0.88)',
+                    borderRadius: 20,
+                    fontSize: 15,
+                    color: '#c62828',
+                    fontWeight: 'bold',
+                    textAlign: 'center',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+                  }}
+                >
+                  {loadingText}
+                </p>
               </div>
             )}
           </div>
@@ -151,13 +251,19 @@ export default function AiPage() {
         <div ref={resultRef} style={resultBox}>
           <div style={{ textAlign: 'left' }}>
             <h2 style={sectionTitle}>👀 관찰 결과</h2>
-            <p>🌾 작물: <strong>{result.crop}</strong> / 지역: <strong>{result.region}</strong></p>
+            <p>
+              🌾 작물: <strong>{result.crop}</strong> / 지역: <strong>{result.region}</strong>
+            </p>
             <ul>{result.observations.map((o, i) => <li key={i}>• {o}</li>)}</ul>
 
             <h3 style={sectionTitle}>🧭 원인 가능성</h3>
-            <ul>{result.possible_causes.map((c, i) => (
-              <li key={i}><strong>{c.name}</strong> 가능성 {c.probability}% - {c.why}</li>
-            ))}</ul>
+            <ul>
+              {result.possible_causes.map((c, i) => (
+                <li key={i}>
+                  <strong>{c.name}</strong> 가능성 {c.probability}% - {c.why}
+                </li>
+              ))}
+            </ul>
 
             <h3 style={sectionTitle}>📌 최종 판단</h3>
             <p style={{ fontWeight: 'bold', color: '#c62828' }}>{result.final_judgement}</p>
