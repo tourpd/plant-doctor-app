@@ -35,7 +35,7 @@ export default function AiPage() {
   const [result, setResult] = useState<ApiResult | ApiFail | null>(null);
 
   // ✅ (추가) 스피너 아래 문구 상태
-  const [loadingText, setLoadingText] = useState('🔍 AI가 병해 신호를 분석 중입니다…');
+  const [loadingText, setLoadingText] = useState('🔍 AI가 병해 증상을 분석 중입니다…');
 
   const magicSoundRef = useRef<HTMLAudioElement>(null); // 🔊 성공 효과음(1회)
   const clickSoundRef = useRef<HTMLAudioElement>(null); // 🔁 진단 중 루프 사운드
@@ -180,8 +180,8 @@ export default function AiPage() {
       <h1 style={{ fontSize: 32, fontWeight: 'bold', color: '#2e7d32', marginBottom: 8, textAlign: 'center' }}>
         🌱 포토닥터 진단
       </h1>
-      <p style={{ marginTop: 0, fontSize: 15, color: '#fbc02d', textAlign: 'center' }}>
-        한국농수산TV가 농민을 위해 만든 AI 병해충·생리장해 진단 서비스입니다.
+      <p style={{ marginTop: 0, fontSize: 17, color: '#3a372fff', textAlign: 'center' }}>
+        한국농수산TV가 농민을 위해 만든 AI 작물 진단 서비스입니다.
       </p>
 
       <div style={{ marginTop: 24 }}>

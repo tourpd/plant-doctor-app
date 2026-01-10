@@ -3,59 +3,88 @@
 /* ===== 전역 변수 ===== */
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #111111; /* 더 진하게 */
+  --card-bg: #ffffff;
+  --card-text: #111111;
 
-  --font-geist-sans: 'Inter', sans-serif;
+  --font-geist-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-geist-mono: 'Roboto Mono', monospace;
 }
 
+/* ❌ 모바일 혼란 원인 → 다크모드 자동 전환 제거 */
+/*
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
   }
 }
+*/
 
 /* ===== 기본 스타일 ===== */
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ===== 카드 / 결과 영역 강제 가독성 ===== */
+.card,
+.result-card,
+section,
+article {
+  background-color: var(--card-bg);
+  color: var(--card-text);
+}
+
+/* ===== 텍스트 가독성 보정 ===== */
+p,
+li,
+span,
+div {
+  color: #222;
+}
+
+.text-muted,
+.text-gray-400,
+.text-gray-500 {
+  color: #555 !important; /* 모바일에서 흐려지는 것 방지 */
+}
+
+/* ===== 제목 강조 ===== */
+h1, h2, h3 {
+  color: #0f5132; /* 진한 녹색 */
+  font-weight: 700;
 }
 
 /* ===== 인풋 플레이스홀더 ===== */
 input::placeholder {
-  color: #555;
+  color: #666;
   font-weight: 500;
 }
 
 /* ===== 스피너 애니메이션 ===== */
 @keyframes spin {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 .spinner {
-  border: 7px solid #eee;
-  border-top: 7px solid #e83b14;
+  border: 6px solid #e5e5e5;
+  border-top: 6px solid #e83b14;
   border-radius: 50%;
-  width: 64px;
-  height: 64px;
+  width: 56px;
+  height: 56px;
   animation: spin 1s linear infinite;
 }
 
-/* ===== 이미지 위에 스피너 중앙 표시용 ===== */
+/* ===== 이미지 위 스피너 오버레이 ===== */
 .spinner-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(255, 255, 255, 0.6);
+  inset: 0;
+  background-color: rgba(255, 255, 255, 0.75);
   display: flex;
   align-items: center;
   justify-content: center;
