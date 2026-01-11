@@ -34,3 +34,12 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+
+## Stable Basecamp
+- Version: v0.3-basecamp
+- Date: 2026-01-10
+- Status:
+  - AI 진단 정상
+  - Google Sheet RAW_LOG 자동 저장 정상
+  - 모바일/PC 동일 동작 확인
