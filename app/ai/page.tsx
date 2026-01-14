@@ -41,20 +41,29 @@ export default function AiPage() {
   const clickSoundRef = useRef<HTMLAudioElement>(null); // 🔁 진단 중 루프 사운드
   const resultRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const savedCrop = localStorage.getItem('crop');
-    const savedProvince = localStorage.getItem('province');
-    const savedCity = localStorage.getItem('city');
-    if (savedCrop) setCrop(savedCrop);
-    if (savedProvince) setProvince(savedProvince);
-    if (savedCity) setCity(savedCity);
-  }, []);
+  // ❌ 초기 로딩 시 localStorage 자동 복원 제거
+// → 처음 접속하면 항상 빈 상태
+useEffect(() => {
+  // intentionally empty
+}, []);
 
-  useEffect(() => {
-    if (result && result.ok && resultRef.current) {
+
+// ✅ 진단 결과가 성공했을 때만 스크롤 + 지역 저장 (작물 제외)
+useEffect(() => {
+  if (result && result.ok) {
+    // 결과 영역으로 스크롤
+    if (resultRef.current) {
       resultRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [result]);
+
+    // ✅ 지역만 저장
+    localStorage.setItem('province', province);
+    localStorage.setItem('city', city);
+
+    // ❌ 작물은 저장하지 않음 (이 줄이 핵심)
+    localStorage.removeItem('crop');
+  }
+}, [result, province, city]);
 
   // ✅ (추가) 로딩 시작 → 문구 초기화, 8초 후 문구 변경
   useEffect(() => {
