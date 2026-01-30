@@ -2,9 +2,8 @@
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
-import { getFirestore } from "firebase-admin/firestore";
-import { getStorage } from "firebase-admin/storage";
 import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "crypto";
 
 // ✅ 구글시트 저장 함수
 import { appendToSheet } from "../../../lib/googleSheets";
@@ -21,22 +20,38 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
 
-// ✅ Firebase Admin SDK 초기화
+// ✅ Firebase Admin SDK 초기화 (⚠️ 빌드 타임 실행 방지: 함수 안에서만 호출)
 import { initializeApp, cert, getApps } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 
-if (!getApps().length) {
-  initializeApp({
-    credential: cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-    }),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-  });
+function initFirebase() {
+  const hasEnv =
+    !!process.env.FIREBASE_PROJECT_ID &&
+    !!process.env.FIREBASE_CLIENT_EMAIL &&
+    !!process.env.FIREBASE_PRIVATE_KEY &&
+    !!process.env.FIREBASE_STORAGE_BUCKET;
+
+  if (!hasEnv) {
+    throw new Error("Firebase environment variables are missing");
+  }
+
+  if (!getApps().length) {
+    initializeApp({
+      credential: cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY!.replace(/\\n/g, "\n"),
+      }),
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+    });
+  }
+
+  const db = getFirestore();
+  const bucket = getStorage().bucket(process.env.FIREBASE_STORAGE_BUCKET);
+
+  return { db, bucket };
 }
-
-const db = getFirestore();
-const bucket = getStorage().bucket(process.env.FIREBASE_STORAGE_BUCKET);
 
 // ✅ JSON 응답 도우미
 function json(data: any, status = 200) {
@@ -89,9 +104,7 @@ function applyMisdiagnosisGuards(input: any) {
 
   // 둘 다 강하게 섞여 있으면: final_judgement를 “추가 확인 필요”로 완화(크래시 방지용 최소 수정)
   if (insectClue && diseaseClue && typeof out.final_judgement === "string") {
-    out.final_judgement = out.final_judgement.trim()
-      ? out.final_judgement
-      : "추가 확인 필요";
+    out.final_judgement = out.final_judgement.trim() ? out.final_judgement : "추가 확인 필요";
   }
 
   // ✅ 대표 오진 가드: 노린재 단서 강한데 top이 벼멸구면 교정
@@ -103,8 +116,7 @@ function applyMisdiagnosisGuards(input: any) {
   if (topName.includes("벼멸구") && hasStinkBugClue && !hasPlanthopperClue && causes?.[0]) {
     causes[0].name = "노린재";
     causes[0].why =
-      (topWhy ? topWhy + " / " : "") +
-      "관찰 단서가 노린재(방패형 체형) 쪽에 더 가깝습니다.";
+      (topWhy ? topWhy + " / " : "") + "관찰 단서가 노린재(방패형 체형) 쪽에 더 가깝습니다.";
     out.possible_causes = causes;
     out.final_judgement = "노린재";
   }
@@ -213,15 +225,31 @@ function enforceDiagnosisShape(input: any) {
 // ✅ POST 요청 처리
 export async function POST(req: Request) {
   try {
+    // ✅ (중요) Firebase는 요청 시점에만 초기화 (빌드 타임 크래시 방지)
+    const { db, bucket } = initFirebase();
+
     const form = await req.formData();
 
     const image = form.get("image") as File | null;
     const crop = (form.get("crop") as string) || "미상";
     const province = (form.get("province") as string) || "";
     const city = (form.get("city") as string) || "";
-    const device_id = (form.get("device_id") as string) || "";
+    const device_id = ((form.get("device_id") as string) || "").trim();
 
     if (!image) return json({ ok: false, error: "사진이 없습니다." }, 400);
+
+    // ✅ (추가) 첫 방문 여부 판정
+    let isFirstDiagnosis = true;
+
+    if (device_id) {
+      const snap = await db
+        .collection("diagnoses")
+        .where("device_id", "==", device_id)
+        .limit(1)
+        .get();
+
+      if (!snap.empty) isFirstDiagnosis = false;
+    }
 
     const buffer = Buffer.from(await image.arrayBuffer());
     const mime = image.type || "image/jpeg";
@@ -352,13 +380,41 @@ export async function POST(req: Request) {
     // ✅ (추가) 최종 형태 보정: 프론트/시트 안전
     data = enforceDiagnosisShape(data);
 
-    // ✅ 이미지 Storage 저장
-    const fileName = `uploads/${uuidv4()}.${mime.split("/")[1]}`;
-    await bucket.file(fileName).save(buffer, {
-      metadata: { contentType: mime },
+    // ✅ 이미지 Storage 저장 (✅ 토큰 심기 + 열리는 URL 생성)
+
+    // 확장자 안전 처리 (jpeg → jpg로 정리)
+    const ext = (mime.split("/")[1] || "jpg").replace("jpeg", "jpg");
+
+    // ✅ 파일명에 시간 넣기 (정렬 최강): 20260124_043501_9f3a....jpg
+    const stamp = new Date()
+      .toISOString()
+      .replace(/[-:]/g, "")
+      .replace("T", "_")
+      .slice(0, 15); // YYYYMMDD_HHMMSS
+
+    const filename = `${stamp}_${uuidv4()}.${ext}`;
+    const objectPath = `uploads/${filename}`;
+
+    // ✅ 다운로드 토큰 생성
+    const downloadToken = randomUUID();
+
+    // ✅ 업로드 + 토큰 심기 (핵심)
+    await bucket.file(objectPath).save(buffer, {
+      contentType: mime,
+      resumable: false,
+      metadata: {
+        metadata: {
+          firebaseStorageDownloadTokens: downloadToken,
+        },
+      },
     });
 
-    const imageStorageUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+    // ✅ “무조건 열리는” 다운로드 URL
+    const imageStorageUrl =
+      `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/` +
+      `${encodeURIComponent(objectPath)}?alt=media&token=${downloadToken}`;
+
+    // ✅ Firestore/Sheet에 저장할 imagePath는 "uploads/..." 형태로!
 
     // ✅ Firestore 저장
     const createdAt = new Date();
@@ -370,9 +426,11 @@ export async function POST(req: Request) {
       city,
       region: regionStr,
       result: data, // ✅ 표준화된 결과(또는 raw fallback) + 최종 보정
-      imagePath: fileName,
+      imagePath: objectPath,
       imageUrl: imageStorageUrl,
       device_id,
+      // 🔽 여기 추가
+      first_diagnosis_used: !isFirstDiagnosis,
     });
 
     console.log("✅ Firestore 저장 완료:", docRef.id);
@@ -406,12 +464,14 @@ export async function POST(req: Request) {
         cause2_prob: c2?.probability ?? "",
         cause2_why: c2?.why ?? "",
 
-        imagePath: fileName,
+        imagePath: objectPath,
         imageUrl: imageStorageUrl,
 
         device_id: device_id || "",
 
-        is_repeat: "첫 방문",
+        // ✅ 여기만 수정: 첫/재방문 저장
+        is_repeat: device_id ? (isFirstDiagnosis ? "첫 방문" : "재방문") : "device_id 없음",
+
         followup_count: "",
         admin_note: "",
         recommendedForSheet: "",

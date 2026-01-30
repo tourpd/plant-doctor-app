@@ -43,3 +43,14 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
   - AI 진단 정상
   - Google Sheet RAW_LOG 자동 저장 정상
   - 모바일/PC 동일 동작 확인
+
+  ## BASECAMP
+- v0.2-stable (2026-01-24)
+- imageUrl token 방식 정상
+- production 기준점
+
+git fetch --tags
+git reset --hard BASECAMP_v0.2_stable_2026_01_24
+npm ci
+npm run build
+vercel --prod

@@ -3,15 +3,38 @@
 import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 
+type LogItem = {
+  type: string;
+  detail?: string;
+  at?: string;
+};
+
+type ImageItem = {
+  downloadUrl: string;
+  type?: string;
+};
+
 type Diagnosis = {
   createdAt: string;
   crop: string;
-  province: string;
-  city: string;
-  imageUrl: string;
-  result: {
-    final_judgement: string;
+
+  // ✅ 기존 구조 유지
+  province?: string;
+  city?: string;
+  imageUrl?: string;
+
+  // ✅ 확장 구조
+  images?: ImageItem[];
+
+  result?: {
+    final_judgement?: string;
   };
+
+  admin?: {
+    status?: 'normal' | 'review' | 'urgent' | 'new';
+  };
+
+  logs?: LogItem[];
 };
 
 export default function AdminPage() {
@@ -40,7 +63,7 @@ export default function AdminPage() {
   }, []);
 
   return (
-    <main style={{ maxWidth: 900, margin: '0 auto', padding: 20 }}>
+    <main style={{ maxWidth: 1000, margin: '0 auto', padding: 20 }}>
       <h1 style={{ fontSize: 28, fontWeight: 'bold', marginBottom: 16 }}>
         📝 진단 기록 (관리자용)
       </h1>
@@ -59,29 +82,66 @@ export default function AdminPage() {
               <th style={th}>작물</th>
               <th style={th}>지역</th>
               <th style={th}>최종 판단</th>
+              <th style={th}>상태</th>
               <th style={th}>사진</th>
+              <th style={th}>로그</th>
             </tr>
           </thead>
           <tbody>
-            {data.map((item, i) => (
-              <tr key={i} style={{ borderBottom: '1px solid #ddd' }}>
-                <td style={td}>
-                  {format(new Date(item.createdAt), 'yyyy-MM-dd HH:mm')}
-                </td>
-                <td style={td}>{item.crop}</td>
-                <td style={td}>{item.province} {item.city}</td>
-                <td style={td}>{item.result?.final_judgement}</td>
-                <td style={td}>
-                  <a href={item.imageUrl} target="_blank" rel="noopener noreferrer">
-                    <img
-                      src={item.imageUrl}
-                      alt="preview"
-                      style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 4 }}
-                    />
-                  </a>
-                </td>
-              </tr>
-            ))}
+            {data.map((item, i) => {
+              // ✅ 이미지 소스 결정 (기존 → 신규 순)
+              const imageSrc =
+                item.imageUrl ||
+                item.images?.[0]?.downloadUrl ||
+                null;
+
+              return (
+                <tr key={i} style={{ borderBottom: '1px solid #ddd' }}>
+                  <td style={td}>
+                    {format(new Date(item.createdAt), 'yyyy-MM-dd HH:mm')}
+                  </td>
+
+                  <td style={td}>{item.crop}</td>
+
+                  <td style={td}>
+                    {item.province} {item.city}
+                  </td>
+
+                  <td style={td}>
+                    {item.result?.final_judgement || '—'}
+                  </td>
+
+                  <td style={td}>
+                    {item.admin?.status || 'new'}
+                  </td>
+
+                  <td style={td}>
+                    {imageSrc ? (
+                      <a href={imageSrc} target="_blank" rel="noopener noreferrer">
+                        <img
+                          src={imageSrc}
+                          alt="preview"
+                          style={{
+                            width: 80,
+                            height: 80,
+                            objectFit: 'cover',
+                            borderRadius: 4
+                          }}
+                        />
+                      </a>
+                    ) : (
+                      <span style={{ color: '#999' }}>없음</span>
+                    )}
+                  </td>
+
+                  <td style={{ ...td, fontSize: 12 }}>
+                    {item.logs && item.logs.length > 0
+                      ? `${item.logs.length}건`
+                      : '—'}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

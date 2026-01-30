@@ -1,0 +1,1 @@
+export { logDiagnosisUpdate } from "./logOnUpdate";

@@ -41,6 +41,18 @@ export default function AiPage() {
   const clickSoundRef = useRef<HTMLAudioElement>(null); // 🔁 진단 중 루프 사운드
   const resultRef = useRef<HTMLDivElement>(null);
 
+  // ✅ (추가) 기기 고정 device_id 생성/저장 (브라우저에 1회 생성 후 계속 재사용)
+  const getOrCreateDeviceId = () => {
+    if (typeof window === 'undefined') return '';
+    const key = 'photodoctor_device_id';
+    let id = localStorage.getItem(key);
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem(key, id);
+    }
+    return id;
+  };
+
   useEffect(() => {
     const savedCrop = localStorage.getItem('crop');
     const savedProvince = localStorage.getItem('province');
@@ -135,6 +147,7 @@ export default function AiPage() {
     fd.append('crop', crop);
     fd.append('province', province);
     fd.append('city', city);
+    fd.append('device_id', getOrCreateDeviceId()); // ✅ 핵심: 첫/재방문 판정용
 
     // 🔁 진단 루프 시작
     startDiagnoseLoop();
@@ -248,104 +261,104 @@ export default function AiPage() {
       </div>
 
       {result && result.ok && (
-  <div ref={resultRef} style={resultBox}>
-    <div style={{ textAlign: 'left' }}>
-      <h2 style={sectionTitle}>👀 관찰 결과</h2>
-      <p>
-        🌾 작물: <strong>{result.crop}</strong> / 지역: <strong>{result.region}</strong>
-      </p>
+        <div ref={resultRef} style={resultBox}>
+          <div style={{ textAlign: 'left' }}>
+            <h2 style={sectionTitle}>👀 관찰 결과</h2>
+            <p>
+              🌾 작물: <strong>{result.crop}</strong> / 지역: <strong>{result.region}</strong>
+            </p>
 
-      <ul>
-        {(Array.isArray(result.observations) ? result.observations : []).map((o, i) => (
-          <li key={i}>• {o}</li>
-        ))}
-      </ul>
+            <ul>
+              {(Array.isArray(result.observations) ? result.observations : []).map((o, i) => (
+                <li key={i}>• {o}</li>
+              ))}
+            </ul>
 
-      <h3 style={sectionTitle}>🧭 원인 가능성</h3>
-      <ul>
-        {(Array.isArray(result.possible_causes) ? result.possible_causes : []).map((c, i) => (
-          <li key={i}>
-            <strong>{c?.name ?? '원인 미상'}</strong> 가능성 {c?.probability ?? '-'}% - {c?.why ?? ''}
-          </li>
-        ))}
-      </ul>
+            <h3 style={sectionTitle}>🧭 원인 가능성</h3>
+            <ul>
+              {(Array.isArray(result.possible_causes) ? result.possible_causes : []).map((c, i) => (
+                <li key={i}>
+                  <strong>{c?.name ?? '원인 미상'}</strong> 가능성 {c?.probability ?? '-'}% - {c?.why ?? ''}
+                </li>
+              ))}
+            </ul>
 
-      <h3 style={sectionTitle}>📌 최종 판단</h3>
-      <p style={{ fontWeight: 'bold', color: '#c62828' }}>{result.final_judgement}</p>
+            <h3 style={sectionTitle}>📌 최종 판단</h3>
+            <p style={{ fontWeight: 'bold', color: '#c62828' }}>{result.final_judgement}</p>
 
-      <h3 style={sectionTitle}>✅ 지금 해야 할 것</h3>
-      <ul>
-        {(Array.isArray(result?.actions?.doNow) ? result.actions.doNow : []).map((t, i) => (
-          <li key={i}>• {t}</li>
-        ))}
-      </ul>
+            <h3 style={sectionTitle}>✅ 지금 해야 할 것</h3>
+            <ul>
+              {(Array.isArray(result?.actions?.doNow) ? result.actions.doNow : []).map((t, i) => (
+                <li key={i}>• {t}</li>
+              ))}
+            </ul>
 
-      <h3 style={sectionTitle}>⛔ 하지 말 것</h3>
-      <ul>
-        {(Array.isArray(result?.actions?.doNot) ? result.actions.doNot : []).map((t, i) => (
-          <li key={i}>• {t}</li>
-        ))}
-      </ul>
+            <h3 style={sectionTitle}>⛔ 하지 말 것</h3>
+            <ul>
+              {(Array.isArray(result?.actions?.doNot) ? result.actions.doNot : []).map((t, i) => (
+                <li key={i}>• {t}</li>
+              ))}
+            </ul>
 
-      <h3 style={sectionTitle}>🔍 반드시 확인</h3>
-      <ul>
-        {(Array.isArray(result?.actions?.mustCheck) ? result.actions.mustCheck : []).map((t, i) => (
-          <li key={i}>• {t}</li>
-        ))}
-      </ul>
-    </div>
-
-    {/* ✅ 자재 추천 정보 */}
-    {(() => {
-      const recommendation = getRecommendation(result.final_judgement);
-      if (!recommendation) return null;
-
-      return (
-        <div style={{ marginTop: 32, textAlign: 'left' }}>
-          <h3 style={{ ...sectionTitle, color: '#33691e' }}>🧪 자재 추천</h3>
-          <p style={{ whiteSpace: 'pre-line', fontSize: 15, lineHeight: 1.6 }}>
-            {recommendation.usageGuide}
-          </p>
-          <div style={{ marginTop: 16 }}>
-            {(recommendation.materials ?? []).map((mat, idx) => (
-              <div
-                key={idx}
-                style={{
-                  marginBottom: 16,
-                  padding: 12,
-                  border: '1px solid #ccc',
-                  borderRadius: 8,
-                  backgroundColor: '#fff',
-                }}
-              >
-                <strong style={{ fontSize: 16 }}>{mat.title}</strong>
-                {mat.description && <p style={{ marginTop: 4 }}>{mat.description}</p>}
-                {mat.howToUse && (
-                  <p style={{ marginTop: 6, fontSize: 14 }}>
-                    <strong>👉 사용법:</strong> {mat.howToUse}
-                  </p>
-                )}
-              </div>
-            ))}
+            <h3 style={sectionTitle}>🔍 반드시 확인</h3>
+            <ul>
+              {(Array.isArray(result?.actions?.mustCheck) ? result.actions.mustCheck : []).map((t, i) => (
+                <li key={i}>• {t}</li>
+              ))}
+            </ul>
           </div>
+
+          {/* ✅ 자재 추천 정보 */}
+          {(() => {
+            const recommendation = getRecommendation(result.final_judgement);
+            if (!recommendation) return null;
+
+            return (
+              <div style={{ marginTop: 32, textAlign: 'left' }}>
+                <h3 style={{ ...sectionTitle, color: '#33691e' }}>🧪 자재 추천</h3>
+                <p style={{ whiteSpace: 'pre-line', fontSize: 15, lineHeight: 1.6 }}>
+                  {recommendation.usageGuide}
+                </p>
+                <div style={{ marginTop: 16 }}>
+                  {(recommendation.materials ?? []).map((mat, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        marginBottom: 16,
+                        padding: 12,
+                        border: '1px solid #ccc',
+                        borderRadius: 8,
+                        backgroundColor: '#fff',
+                      }}
+                    >
+                      <strong style={{ fontSize: 16 }}>{mat.title}</strong>
+                      {mat.description && <p style={{ marginTop: 4 }}>{mat.description}</p>}
+                      {mat.howToUse && (
+                        <p style={{ marginTop: 6, fontSize: 14 }}>
+                          <strong>👉 사용법:</strong> {mat.howToUse}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          <p style={{ marginTop: 20, fontSize: 14, color: '#888', textAlign: 'center' }}>
+            ⚠️ 이 결과는 AI의 참고 진단이며, 최종 판단은 농업인 본인의 책임입니다.
+          </p>
+
+          <a
+            href="https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={emergencyButton}
+          >
+            🚨 농사톡톡 119 출동 요청
+          </a>
         </div>
-      );
-    })()}
-
-    <p style={{ marginTop: 20, fontSize: 14, color: '#888', textAlign: 'center' }}>
-      ⚠️ 이 결과는 AI의 참고 진단이며, 최종 판단은 농업인 본인의 책임입니다.
-    </p>
-
-    <a
-      href="https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform"
-      target="_blank"
-      rel="noopener noreferrer"
-      style={emergencyButton}
-    >
-      🚨 농사톡톡 119 출동 요청
-    </a>
-  </div>
-)}
+      )}
 
       {result && !result.ok && (
         <div style={{ marginTop: 20, color: 'red', fontWeight: 'bold' }}>
