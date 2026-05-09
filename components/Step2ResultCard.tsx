@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import PhotoDoctorSalesCTA from "./PhotoDoctorSalesCTA";
 
 type DiseaseProb = {
   name: string;
@@ -177,7 +178,10 @@ function ProductGroup({
       <div style={{ color: "#00bfff", marginBottom: 4 }}>• {title}</div>
       <ul>
         {items.map((p) => (
-          <li key={p}>- {p}</li>
+          <li key={p} style={{ marginBottom: 12 }}>
+  - {p}
+  <PhotoDoctorSalesCTA productName={p} />
+</li>
         ))}
       </ul>
     </div>
