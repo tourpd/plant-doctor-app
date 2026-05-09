@@ -46,6 +46,9 @@ export default function Step2ResultCard({
         marginBottom: 30,
       }}
     >
+      {/* ======================
+          병명 확률 그래프
+      ====================== */}
       <h3 style={{ color: "#ffd400", marginBottom: 10 }}>
         📊 가능성 있는 원인
       </h3>
@@ -63,7 +66,6 @@ export default function Step2ResultCard({
             <span>{d.name}</span>
             <span>{d.probability}%</span>
           </div>
-
           <div
             style={{
               width: "100%",
@@ -84,16 +86,20 @@ export default function Step2ResultCard({
         </div>
       ))}
 
+      {/* ======================
+          판단 요약
+      ====================== */}
       <div style={{ marginTop: 14, color: "#00ff88", fontWeight: 700 }}>
         🧠 판단 요약
       </div>
-
       <p style={{ marginTop: 6, lineHeight: 1.6 }}>{result.summary}</p>
 
+      {/* ======================
+          즉시 행동 가이드
+      ====================== */}
       <div style={{ marginTop: 14, color: "#ff8888", fontWeight: 700 }}>
         🧭 지금 당장 할 수 있는 행동
       </div>
-
       <ul style={{ marginTop: 6 }}>
         {result.immediate_actions.map((a, i) => (
           <li key={i} style={{ marginBottom: 6 }}>
@@ -102,6 +108,9 @@ export default function Step2ResultCard({
         ))}
       </ul>
 
+      {/* ======================
+          제품 버튼 (접힘)
+      ====================== */}
       <button
         onClick={() => setShowProducts(!showProducts)}
         style={{
@@ -135,6 +144,9 @@ export default function Step2ResultCard({
         </div>
       )}
 
+      {/* ======================
+          책임 문구 (고정)
+      ====================== */}
       <div
         style={{
           marginTop: 16,
@@ -151,6 +163,9 @@ export default function Step2ResultCard({
   );
 }
 
+/* ======================
+   제품 그룹 컴포넌트
+====================== */
 function ProductGroup({
   title,
   items,
@@ -158,40 +173,17 @@ function ProductGroup({
   title: string;
   items: string[];
 }) {
-  if (!items || items.length === 0) return null;
-
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ color: "#00bfff", marginBottom: 8, fontWeight: 800 }}>
-        • {title}
-      </div>
-
-      <div style={{ display: "grid", gap: 12 }}>
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ color: "#00bfff", marginBottom: 4 }}>• {title}</div>
+      <ul>
         {items.map((p) => (
-          <div
-            key={p}
-            style={{
-              background: "#1a1a1a",
-              border: "1px solid #333",
-              borderRadius: 12,
-              padding: 12,
-            }}
-          >
-            <div
-              style={{
-                marginBottom: 8,
-                color: "#fff",
-                fontWeight: 800,
-                lineHeight: 1.5,
-              }}
-            >
-              🧪 {p}
-            </div>
-
-            <PhotoDoctorSalesCTA productName={p} />
-          </div>
+          <li key={p} style={{ marginBottom: 12 }}>
+  - {p}
+  <PhotoDoctorSalesCTA productName={p} />
+</li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }
