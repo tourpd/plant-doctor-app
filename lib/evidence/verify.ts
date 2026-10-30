@@ -14,7 +14,7 @@ export const VERIFY_RULES = `
    - 날씨 자료가 없으면 환경 원인(건조·일소·고온·과습)의 확률을 낮게 잡고 ask_questions 로 확인한다.
 3. 건조·일소만 반복하는 판정을 피한다. 사진에 병반·곰팡이·벌레 흔적이 있으면 병해충을 먼저 본다.
 4. 각 원인의 why 끝에 근거를 괄호로 쓴다. 예: "(사례 2와 증상 비슷)", "(최근 7일 강수 0mm, 최고 31℃)", "(사진 근거만)".
-5. 사진 한 장으로 단정하지 않는다. 1순위는 70% 이하, possible_causes 3개(방향 1 + 다른 가능성 2), 각 원인에 how_to_tell(농민이 직접 가리는 법), safe_actions(어느 쪽이든 해도 손해 없는 일 2~4개)를 쓴다.
+5. possible_causes 2~3개(가장 가능성 높은 것 + 다른 가능성), 확률은 정직하게(상한은 서버가 맞춤), 건강해 보이면 "정상"을 1순위로, 뚜렷한 병반·벌레는 그대로 1순위로, 각 원인에 how_to_tell(농민이 직접 가리는 법), safe_actions(어느 쪽이든 해도 손해 없는 일 2~4개)를 쓴다.
 6. 출력 JSON 형식은 1차와 같고, "evidence_used": ["사례 2", "날씨"] 처럼 실제로 쓴 근거를 적는다.
 `.trim();
 
@@ -38,7 +38,14 @@ export function applyWeatherGuard(result: any, w: WeatherSummary | null): string
     }
   }
   if (notes.length) {
-    result.possible_causes.sort((a: any, b: any) => (Number(b?.probability) || 0) - (Number(a?.probability) || 0));
+    // 날씨와 맞지 않는 원인은 맞는 원인보다 반드시 아래로 (확률을 깎아도 1순위에 남는 일 방지)
+    const demoted = new Set(notes.map((x) => x.split(":")[0]));
+    const ok = result.possible_causes.filter((c: any) => !demoted.has(String(c?.name)));
+    const bad = result.possible_causes.filter((c: any) => demoted.has(String(c?.name)));
+    const minOk = ok.length ? Math.min(...ok.map((c: any) => Number(c?.probability) || 0)) : 0;
+    if (ok.length) bad.forEach((c: any) => (c.probability = Math.max(1, Math.min(Number(c.probability) || 1, minOk - 1))));
+    else result.weather_conflict = true; // 후보가 전부 날씨와 안 맞음
+    result.possible_causes = [...ok, ...bad];
     result.final_judgement = result.possible_causes[0]?.name || result.final_judgement;
     // 환경 원인을 내려서 결핍이 1순위로 "떠밀려 올라온" 경우는 확정 못 하게 (결핍은 마지막에 보는 원인)
     const top = result.possible_causes[0];

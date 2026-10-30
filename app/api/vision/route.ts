@@ -214,6 +214,9 @@ function applyV2Rules(out: any) {
   if (out.status === "needs_more_photos") {
     out.final_judgement = "사진 다시 필요";
     if (!out.photo_request) out.photo_request = "증상 부위를 가까이(20~30cm), 그리고 포기 전체를 한 장 더 밝은 곳에서 찍어 주세요.";
+  } else if (out.weather_conflict) {
+    out.status = "open";
+    out.final_judgement = "사진만 보면 날씨 탓 같지만 최근 날씨와 맞지 않습니다 — 병·벌레 가능성을 확인해 보세요";
   } else if (dir === "정상" && dirP >= 60) {
     out.status = "direction";
     out.final_judgement = "정상으로 보입니다";
