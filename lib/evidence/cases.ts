@@ -24,13 +24,21 @@ function load() {
 }
 
 const ALIAS: Record<string, string[]> = {
-  호박: ["호박", "애호박", "단호박", "주키니"], 무: ["무", "알타리", "총각무", "가을무", "열무"], 파: ["파", "대파", "쪽파"],
-  감귤: ["감귤", "귤", "한라봉", "온주밀감"], 참다래: ["참다래", "키위"], 토마토: ["토마토", "방울토마토"], 고추: ["고추", "풋고추", "청양고추"],
+  호박: ["호박", "애호박", "단호박", "주키니", "호박잎"], 무: ["무", "알타리", "알타리무", "총각무", "가을무", "열무", "봄무"],
+  파: ["파", "대파", "쪽파"], 감귤: ["감귤", "귤", "한라봉", "온주밀감", "기타감귤"], 참다래: ["참다래", "키위"],
+  토마토: ["토마토", "방울토마토", "일반토마토", "대추토마토"], 고추: ["고추", "풋고추", "청양고추", "꽈리고추"],
+  배추: ["배추", "가을배추", "봄배추", "고랭지배추", "얼갈이배추"], 상추: ["상추", "결구상추"], 딸기: ["딸기"],
 };
+const norm = (s: string) => String(s || "").replace(/\(.*?\)|\s/g, "");
 function cropKeys(crop: string): string[] {
-  const c = String(crop || "").replace(/\s|잎|\(.*\)/g, "");
-  for (const [k, list] of Object.entries(ALIAS)) if (list.some((a) => c.includes(a) || a.includes(c))) return list;
+  const c = norm(crop).replace(/잎$/, "");
+  for (const list of Object.values(ALIAS)) if (list.includes(c) || list.includes(norm(crop))) return list;
   return c ? [c] : [];
+}
+/** 같은 작물인지: 이름이 같거나, 앞에 수식어만 붙은 경우(가을배추→배추). "배"가 "배추"에, "고추"가 "고추나무"에 걸리지 않게 함 */
+function sameCrop(caseCrop: string, keys: string[]) {
+  const c = norm(caseCrop);
+  return keys.some((k) => c === k || (c.endsWith(k) && k.length >= 2) || (k.length >= 2 && c.length > k.length && c.endsWith(k)));
 }
 
 export async function findSimilarCases(crop: string, queryText: string, k = 5): Promise<ExpertCase[]> {
@@ -47,13 +55,14 @@ export async function findSimilarCases(crop: string, queryText: string, k = 5): 
     const q: number[] = (await r.json())?.data?.[0]?.embedding;
     if (!q) return [];
     const keys = cropKeys(crop);
-    const same = (c: ExpertCase) => keys.some((x) => c.crop.includes(x));
+    const sameIdx = db.cases.map((c, i) => (sameCrop(c.crop, keys) ? i : -1)).filter((i) => i >= 0);
+    // 같은 작물 사례가 5건 이상 있으면 그 안에서만 찾음 (다른 작물 사례로 판정이 흐려지지 않게)
+    const pool = sameIdx.length >= 5 ? sameIdx : db.cases.map((_, i) => i);
     const scored: { i: number; s: number }[] = [];
-    for (let i = 0; i < db.cases.length; i++) {
+    for (const i of pool) {
       let s = 0;
       const o = i * db.dims;
       for (let d = 0; d < db.dims; d++) s += q[d] * db.vecs[o + d];
-      if (same(db.cases[i])) s += 0.08; // 같은 작물 우대
       scored.push({ i, s });
     }
     scored.sort((a, b) => b.s - a.s);

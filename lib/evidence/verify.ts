@@ -17,10 +17,37 @@ export const VERIFY_RULES = `
 5. 출력 JSON 형식은 1차와 같고, "evidence_used": ["사례 2", "날씨"] 처럼 실제로 쓴 근거를 적는다.
 `.trim();
 
+/** 날씨와 안 맞는 환경 원인을 서버에서 강제로 내림 (AI가 규칙을 무시해도) */
+export function applyWeatherGuard(result: any, w: WeatherSummary | null): string[] {
+  const notes: string[] = [];
+  if (!w || !Array.isArray(result?.possible_causes)) return notes;
+  const recentRain = w.rainSum >= 20 || (w.lastRainDaysAgo != null && w.lastRainDaysAgo <= 3);
+  for (const c of result.possible_causes) {
+    const n = String(c?.name || "");
+    const p = Number(c?.probability) || 0;
+    if (/건조|수분\s*부족|가뭄|물\s*부족/.test(n) && recentRain) {
+      c.probability = Math.max(1, Math.round(p * 0.3));
+      notes.push(`${n}: 최근 비(${w.rainSum}mm${w.lastRainDaysAgo ? `, ${w.lastRainDaysAgo}일 전` : ""}) → 낮춤`);
+    } else if (/일소|햇빛|햇볕|고온/.test(n) && w.maxTaAvg != null && w.maxTaAvg < 28) {
+      c.probability = Math.max(1, Math.round(p * 0.4));
+      notes.push(`${n}: 낮 최고 평균 ${w.maxTaAvg}℃(28℃ 미만) → 낮춤`);
+    } else if (/저온|냉해|동해|서리/.test(n) && w.minTaMin != null && w.minTaMin > 10) {
+      c.probability = Math.max(1, Math.round(p * 0.4));
+      notes.push(`${n}: 밤 최저 ${w.minTaMin}℃(10℃ 초과) → 낮춤`);
+    }
+  }
+  if (notes.length) {
+    result.possible_causes.sort((a: any, b: any) => (Number(b?.probability) || 0) - (Number(a?.probability) || 0));
+    result.final_judgement = result.possible_causes[0]?.name || result.final_judgement;
+  }
+  return notes;
+}
+
 export type Evidence = {
   cases: { id: number; crop: string; region: string; month: string; category: string; pest: string }[];
   case_images: number;
   weather: string | null;
+  weather_guard: string[];
 };
 
 export async function verifyWithEvidence(opts: {
@@ -70,12 +97,14 @@ export async function verifyWithEvidence(opts: {
   });
   const out = JSON.parse(resp.choices[0]?.message?.content || "null");
   if (!out || !Array.isArray(out.possible_causes) || !out.possible_causes.length) return null;
+  const guard = applyWeatherGuard(out, weather);
   return {
     result: out,
     evidence: {
       cases: cases.map((c) => ({ id: c.id, crop: c.crop, region: `${c.sido} ${c.sigungu}`.trim(), month: c.month, category: c.category, pest: c.pest })),
       case_images: refImgs.length,
       weather: weather?.text || null,
+      weather_guard: guard,
     },
   };
 }

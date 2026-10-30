@@ -61,7 +61,7 @@ async function one(r, i) {
     before: before.final_judgement || "", before_causes: fmt(before.possible_causes),
     after: after.final_judgement || "", after_causes: fmt(after.possible_causes),
     after_guess: after.ai_top_guess || "", type: after.judgement_type || "", confidence: after.confidence ?? "",
-    first_pass: after.first_pass || "", weather: after.evidence?.weather || "",
+    first_pass: after.first_pass || "", weather: after.evidence?.weather || "", weather_guard: (after.evidence?.weather_guard || []).join(" / "),
     cases: (after.evidence?.cases || []).map((c) => `${c.crop}:${c.category}/${c.pest}`).join(" | "), case_images: after.evidence?.case_images ?? "",
     status: after.status || "", questions: (after.ask_questions || []).join(" / "), photo_request: after.photo_request || "", error: err,
   });
