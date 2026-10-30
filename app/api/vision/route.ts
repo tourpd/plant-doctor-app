@@ -11,6 +11,12 @@ import { appendToSheet } from "../../../lib/googleSheets";
 // ✅ 🔥 병해충 표준화 함수 (추가)
 import { standardizeDiagnosis } from "../../../lib/standardizeDiagnosis";
 
+// ✅ 진단 지침 v2 (2026-10-30)
+import { GUARD_PROMPT_DIAGNOSIS_V2, PROMPT_VERSION } from "../../prompts/guard_prompt_diagnosis_v2";
+
+// ✅ 시험용 기기 — 이 device_id 로 들어온 진단은 사진·DB·시트에 저장하지 않음(운영 기록 오염 방지)
+const TEST_DEVICE_ID = "claude-system-check";
+
 // ✅ Edge 환경 방지
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -124,6 +130,41 @@ function applyMisdiagnosisGuards(input: any) {
   return out;
 }
 
+/** ✅ v2: 확신도·상태 판정을 서버에서도 강제 (AI가 규칙을 어겨도 여기서 바로잡음) */
+const V2_TYPES = ["병해", "해충", "생리장해", "약해", "불명"];
+const V2_STATUS = ["confident", "uncertain", "needs_more_photos"];
+const UNCERTAIN_LABEL = "전문가 확인 필요";
+
+function applyV2Rules(out: any) {
+  const causes = ensureArray<any>(out.possible_causes);
+  const p1 = Number(causes?.[0]?.probability) || 0;
+  const p2 = Number(causes?.[1]?.probability) || 0;
+
+  out.judgement_type = V2_TYPES.includes(out.judgement_type) ? out.judgement_type : "불명";
+  out.confidence = clampInt(out.confidence, 0, 100, p1);
+  out.status = V2_STATUS.includes(out.status) ? out.status : "confident";
+  out.ask_questions = ensureArray<string>(out.ask_questions)
+    .map((x) => (typeof x === "string" ? x.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 5);
+  out.photo_request = typeof out.photo_request === "string" ? out.photo_request.trim() : "";
+
+  // 규칙 3: 1순위 60% 미만 또는 1·2순위 차이 15%p 이내 → 모르겠음
+  if (out.status === "confident" && (p1 < 60 || out.confidence < 60 || p1 - p2 <= 15)) {
+    out.status = "uncertain";
+  }
+  if (out.status !== "confident") {
+    out.ai_top_guess = causes?.[0]?.name || "";
+    out.final_judgement = out.status === "needs_more_photos" ? "사진 다시 필요" : UNCERTAIN_LABEL;
+    if (out.judgement_type !== "불명" && out.status === "needs_more_photos") out.judgement_type = "불명";
+  }
+  if (out.status === "needs_more_photos" && !out.photo_request) {
+    out.photo_request = "증상 부위를 가까이(20~30cm), 그리고 포기 전체를 한 장 더 밝은 곳에서 찍어 주세요.";
+  }
+  out.prompt_version = PROMPT_VERSION;
+  return out;
+}
+
 function enforceDiagnosisShape(input: any) {
   // ✅ (추가) 오진 가드 먼저 적용(최소 개입) → 그 다음 형태 보정
   let out: any = applyMisdiagnosisGuards(input);
@@ -219,7 +260,8 @@ function enforceDiagnosisShape(input: any) {
 
   out.ok = !!out.ok;
 
-  return out;
+  // ✅ v2 규칙 (형태 보정 뒤 마지막에)
+  return applyV2Rules(out);
 }
 
 // ✅ POST 요청 처리
@@ -293,6 +335,11 @@ export async function POST(req: Request) {
   "observations": [],
   "possible_causes": [],
   "final_judgement": "",
+  "judgement_type": "병해|해충|생리장해|약해|불명",
+  "confidence": 0,
+  "status": "confident|uncertain|needs_more_photos",
+  "ask_questions": [],
+  "photo_request": "",
   "actions": {},
   "disclaimer": "",
   "emergency_form_url": ""
@@ -319,7 +366,7 @@ export async function POST(req: Request) {
   - doNow: 2~5개 (빈 배열 금지)
   - doNot: 1~3개 (빈 배열 금지)
   - mustCheck: 2~5개 (빈 배열 금지)
-- final_judgement는 비어있지 않은 문자열(최소 2글자)이며, possible_causes[0].name과 동일하거나 더 구체화된 표현이어야 함.
+- final_judgement는 비어있지 않은 문자열(최소 2글자)이며, possible_causes[0].name과 동일하거나 더 구체화된 표현이어야 함. 단, status가 uncertain이면 "전문가 확인 필요", needs_more_photos면 "사진 다시 필요".
 - disclaimer와 emergency_form_url은 반드시 포함하며, 비어있지 않은 문자열이어야 함.
 - 어떤 필드도 null/undefined로 출력하지 말 것. 문자열은 "" 금지(필수 필드).
 - “확률 합계 100” 규칙을 만족하지 않으면, 출력 전에 스스로 수정하여 100으로 맞춘 후 출력.
@@ -327,6 +374,8 @@ export async function POST(req: Request) {
 [금지]
 - 마크다운/코드블록/추가 설명 문장/주석/전후 텍스트 절대 금지.
 - JSON 밖의 어떤 문자도 출력 금지.
+
+${GUARD_PROMPT_DIAGNOSIS_V2}
 `.trim();
 
     const user = `
@@ -379,6 +428,11 @@ export async function POST(req: Request) {
 
     // ✅ (추가) 최종 형태 보정: 프론트/시트 안전
     data = enforceDiagnosisShape(data);
+
+    // ✅ 시험 기기: 저장 없이 결과만 돌려줌 (운영 DB·시트·앱시트에 안 남음)
+    if (device_id === TEST_DEVICE_ID) {
+      return json({ ...data, test_mode: true });
+    }
 
     // ✅ 이미지 Storage 저장 (✅ 토큰 심기 + 열리는 URL 생성)
 
