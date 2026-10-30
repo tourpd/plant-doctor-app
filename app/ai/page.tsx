@@ -449,7 +449,7 @@ const emergencyButton: React.CSSProperties = {
 const EXPO = 'https://kagri-expo.com';
 
 function YakbaksaCard({ crop, dx, prob }: { crop?: string; dx?: string; prob?: number }) {
-  const [data, setData] = React.useState<null | { problem: { title: string; url: string }; products: Array<{ name: string; company: string | null; yakbaksa_url: string }> }>(null);
+  const [data, setData] = React.useState<null | { problem: { title: string; url: string }; products: Array<{ name: string; company: string | null; yakbaksa_url: string; buy?: { label: string; url: string; kind: string; sub?: string | null } | null }>; coupang_notice?: string | null }>(null);
   React.useEffect(() => {
     if (!dx) return;
     const q = new URLSearchParams({ crop: crop ?? '', dx });
@@ -476,12 +476,21 @@ function YakbaksaCard({ crop, dx, prob }: { crop?: string; dx?: string; prob?: n
       {data?.products?.length ? (
         <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
           {data.products.slice(0, 2).map((p, i) => (
-            <a key={i} href={p.yakbaksa_url} target="_blank" rel="noopener noreferrer"
-               style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', borderRadius: 12, background: '#fff', border: '1px solid #bbf7d0', textDecoration: 'none', color: '#0f172a' }}>
-              <span><span style={{ fontSize: 12, color: '#16a34a', fontWeight: 800 }}>{p.company ?? ''}</span><br /><strong>{p.name}</strong></span>
-              <span style={{ fontSize: 13, fontWeight: 900, color: '#15803d' }}>몇 병? ›</span>
-            </a>
+            <div key={i} style={{ padding: '10px 12px', borderRadius: 12, background: '#fff', border: '1px solid #bbf7d0' }}>
+              <a href={p.yakbaksa_url} target="_blank" rel="noopener noreferrer"
+                 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', textDecoration: 'none', color: '#0f172a' }}>
+                <span><span style={{ fontSize: 12, color: '#16a34a', fontWeight: 800 }}>{p.company ?? ''}</span><br /><strong>{p.name}</strong></span>
+                <span style={{ fontSize: 13, fontWeight: 900, color: '#15803d' }}>몇 병? ›</span>
+              </a>
+              {p.buy ? (
+                <a href={p.buy.url} target="_blank" rel="noopener noreferrer sponsored"
+                   style={{ display: 'block', marginTop: 8, padding: '10px', borderRadius: 10, background: p.buy.kind === 'ours' ? '#14532d' : '#fff7ed', border: p.buy.kind === 'ours' ? 'none' : '1px solid #fdba74', color: p.buy.kind === 'ours' ? '#fff' : '#c2410c', fontWeight: 900, fontSize: 14, textAlign: 'center', textDecoration: 'none' }}>
+                  🛒 {p.buy.label}{p.buy.sub ? ` · ${p.buy.sub}` : ''} ›
+                </a>
+              ) : null}
+            </div>
           ))}
+          {data.coupang_notice ? <div style={{ fontSize: 11, color: '#64748b' }}>{data.coupang_notice}</div> : null}
         </div>
       ) : null}
       <a href={href} target="_blank" rel="noopener noreferrer"
