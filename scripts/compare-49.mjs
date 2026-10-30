@@ -55,12 +55,13 @@ async function one(r, i) {
     if (!after.test_mode) throw new Error("test_mode 아님 — 저장됐을 수 있음! 중단");
   } catch (e) { err = String(e.message || e); if (err.includes("중단")) { console.error(err); process.exit(2); } }
   const fmt = c => (c || []).map(x => `${x.name} ${x.probability}%`).join(" / ");
+  const tell = c => (c || []).map(x => x.how_to_tell ? `${x.name}: ${x.how_to_tell}` : "").filter(Boolean).join(" | ");
   out.push({
     no: i, date: (r.createdAt?.toDate?.() || new Date(r.createdAt)).toISOString().slice(0, 16).replace("T", " "),
     crop: r.crop, region: r.region, photo: r.imageUrl,
     before: before.final_judgement || "", before_causes: fmt(before.possible_causes),
     after: after.final_judgement || "", after_causes: fmt(after.possible_causes),
-    after_guess: after.ai_top_guess || "", type: after.judgement_type || "", confidence: after.confidence ?? "",
+    after_guess: after.ai_top_guess || "", direction: after.direction || "", direction_share: JSON.stringify(after.direction_share || {}), how_to_tell: tell(after.possible_causes), safe_actions: (after.safe_actions || []).join(" / "), type: after.judgement_type || "", confidence: after.confidence ?? "",
     first_pass: after.first_pass || "", weather: after.evidence?.weather || "", weather_guard: (after.evidence?.weather_guard || []).join(" / "),
     cases: (after.evidence?.cases || []).map((c) => `${c.crop}:${c.category}/${c.pest}`).join(" | "), case_images: after.evidence?.case_images ?? "",
     status: after.status || "", questions: (after.ask_questions || []).join(" / "), photo_request: after.photo_request || "", error: err,
@@ -79,9 +80,10 @@ const sum = {
   "대상": n, "오류": n - ok.length,
   "결핍 판정(전)": out.filter(o => isDeficit(o.before)).length,
   "결핍 판정(후)": ok.filter(o => isDeficit(o.after)).length,
-  "확정(후)": ok.filter(o => o.status === "confident").length,
-  "추정(후)": ok.filter(o => o.status === "likely").length,
-  "전문가 확인 필요(후)": ok.filter(o => o.status === "uncertain").length,
+  "방향 뚜렷(후)": ok.filter(o => o.status === "direction").length,
+  "방향 추정(후)": ok.filter(o => o.status === "likely").length,
+  "가능성 열어둠(후)": ok.filter(o => o.status === "open").length,
+  "방향 분포(후)": ok.reduce((m, o) => (m[o.direction] = (m[o.direction] || 0) + 1, m), {}),
   "추정 1순위가 결핍(후)": ok.filter(o => isDeficit(o.after_guess)).length,
   "사진 다시 요청(후)": ok.filter(o => o.status === "needs_more_photos").length,
   "판정 바뀜": ok.filter(o => o.before !== o.after).length,

@@ -135,62 +135,101 @@ function applyMisdiagnosisGuards(input: any) {
   return out;
 }
 
-/** ✅ v2.1: 판정 단계를 서버가 정함 (AI가 규칙을 어겨도 여기서 바로잡음)
- *  - confident(확정): 1순위 65% 이상, 2순위와 25%p 이상 차이
- *  - likely(추정): 1순위 40% 이상, 2순위와 10%p 이상 차이 → "OOO (추정)" + 확인 질문
- *  - uncertain(전문가 확인 필요): 그 밖 → 상담 연결
+/** ✅ v3 (2026-10-30): "70% 방향 + 30% 다른 가능성"
+ *  - 사진 한 장으로 단정하지 않음: 1순위 확률 최대 70%, 나머지 30%는 다른 가능성으로 열어 둠
+ *  - 원인을 "방향"(물·온도 / 병 / 벌레 / 영양 / 약해 / 정상)으로 묶어 판단 — 같은 방향 후보의 확률을 합침
+ *  - 방향 합 60% 이상 = "방향 뚜렷", 40~60% = "방향 추정", 그 밖 = "가능성 열어 둠"(상담 연결)
  *  - 뭉뚱그린 이름(영양 결핍·생리장해·환경 스트레스 등)은 후보에서 지움
  */
 const V2_TYPES = ["병해", "해충", "생리장해", "약해", "불명"];
-const UNCERTAIN_LABEL = "전문가 확인 필요";
 const VAGUE_NAME =
-  /^(영양\s*(결핍|부족|불균형|과다)?|(일반\s*)?생리(적)?\s*(장해|문제|스트레스)|환경(적)?\s*(스트레스|요인|문제)|병해(충)?(\s*피해)?|곰팡이병|세균병|바이러스병|원인\s*미상.*|기타)$/;
+  /^(영양\s*(결핍|부족|불균형|과다)?|(일반\s*)?생리(적)?\s*(장해|문제|스트레스)|환경(적)?\s*(스트레스|요인|문제)|병해(충)?(\s*피해)?|곰팡이병|세균병|바이러스병|원인\s*미상.*|기타|일시적\s*스트레스|(일반적인\s*)?(생육|생장)\s*상태)$/;
+const TOP_CAP = 70;
 
 function isVagueName(name: string) {
   return VAGUE_NAME.test(String(name || "").replace(/\s+/g, " ").trim());
 }
 
+function directionOf(name: string): string {
+  const n = String(name || "");
+  if (/정상/.test(n)) return "정상";
+  if (/약해|농약\s*피해|제초제/.test(n)) return "약해";
+  if (/결핍|과다|영양|비료/.test(n)) return "영양";
+  if (/나방|진딧물|응애|총채|벌레|노린재|멸구|굴파리|애벌레|해충|깍지|파리|선충|달팽이|민달팽이|거세미|담배나방|좀나방|잎벌레|매미충/.test(n)) return "벌레";
+  if (/건조|수분|가뭄|과습|침수|일소|햇|고온|저온|냉해|동해|서리|열과|염류|물리적|기계적|바람|우박|이데마|수종/.test(n)) return "물·온도";
+  if (/병|곰팡이|역병|탄저|무름|흰가루|노균|바이러스|반점|무늬|마름|썩음|궤양|부패|균/.test(n)) return "병";
+  return "기타";
+}
+const SAFE_DEFAULT: Record<string, string[]> = {
+  "물·온도": ["손가락 한 마디 깊이로 흙을 만져 마름·질척임을 확인하세요.", "원인 확인 전에는 약을 치지 마세요.", "3일 뒤 같은 자리를 다시 찍어 비교해 주세요."],
+  병: ["병든 잎·열매는 따서 밭 밖으로 치우세요.", "잎이 젖어 있는 시간을 줄이도록 환기·물주기를 조절하세요.", "3일 뒤 같은 자리를 다시 찍어 번지는지 확인해 주세요."],
+  벌레: ["잎 뒷면과 새순을 돋보기로 확인해 벌레·알을 찾아보세요.", "벌레가 보이면 그 포기만 먼저 따로 표시해 두세요.", "3일 뒤 피해가 늘었는지 다시 찍어 주세요."],
+  영양: ["비료를 더 주기 전에 물 상태와 뿌리부터 확인하세요.", "같은 비료·영양제를 반복해서 주지 마세요.", "새잎과 아랫잎 중 어디서 시작됐는지 찍어 주세요."],
+  약해: ["최근 2주 친 약 이름과 농도를 확인해 주세요.", "같은 약을 다시 치지 마세요.", "새로 나오는 잎이 정상인지 1주 뒤 확인해 주세요."],
+  정상: ["지금은 특별한 조치가 필요 없어 보입니다.", "변화가 생기면 같은 자리를 다시 찍어 주세요."],
+  기타: ["병든 부위는 따서 밭 밖으로 치우세요.", "원인 확인 전에는 같은 약을 반복해서 치지 마세요.", "포기 전체 사진을 한 장 더 찍어 주세요."],
+};
+
 function applyV2Rules(out: any) {
   const all = ensureArray<any>(out.possible_causes);
-  const specific = all.filter((c) => !isVagueName(c?.name));
+  let causes = all.filter((c) => !isVagueName(c?.name));
   out.vague_removed = all.filter((c) => isVagueName(c?.name)).map((c) => c?.name);
-  out.possible_causes = specific;
 
-  const p1 = Number(specific?.[0]?.probability) || 0;
-  const p2 = Number(specific?.[1]?.probability) || 0;
-  const gap = p1 - p2;
+  // 확률 다시 맞추기 (합 100) + 1순위 상한 70%
+  const tot = causes.reduce((a, c) => a + (Number(c?.probability) || 0), 0) || 1;
+  causes = causes
+    .map((c) => ({ ...c, probability: Math.round(((Number(c?.probability) || 0) / tot) * 100) }))
+    .sort((a, b) => b.probability - a.probability);
+  if (causes.length && causes[0].probability > TOP_CAP) {
+    const extra = causes[0].probability - TOP_CAP;
+    causes[0].probability = TOP_CAP;
+    const rest = causes.slice(1);
+    const restTot = rest.reduce((a, c) => a + c.probability, 0);
+    if (rest.length) rest.forEach((c) => (c.probability += restTot ? Math.round((c.probability / restTot) * extra) : Math.round(extra / rest.length)));
+    else causes.push({ name: "다른 원인 가능성", probability: 100 - TOP_CAP, why: "사진 한 장으로는 다른 원인을 배제할 수 없습니다.", how_to_tell: "포기 전체와 잎 뒷면 사진을 더 찍어 확인해 주세요." });
+  }
+  causes.forEach((c) => {
+    c.direction = directionOf(c.name);
+    c.how_to_tell = typeof c.how_to_tell === "string" ? c.how_to_tell.trim() : "";
+  });
+  out.possible_causes = causes;
+
+  // 방향별 확률 합
+  const share: Record<string, number> = {};
+  for (const c of causes) share[c.direction] = (share[c.direction] || 0) + c.probability;
+  const dirs = Object.entries(share).sort((a, b) => b[1] - a[1]);
+  const [dir, dirP] = dirs[0] || ["기타", 0];
+  const top = causes.find((c) => c.direction === dir) || causes[0];
+  out.direction = dir;
+  out.direction_share = share;
 
   out.judgement_type = V2_TYPES.includes(out.judgement_type) ? out.judgement_type : "불명";
-  out.confidence = clampInt(out.confidence, 0, 100, p1);
-  out.ask_questions = ensureArray<string>(out.ask_questions)
-    .map((x) => (typeof x === "string" ? x.trim() : ""))
-    .filter(Boolean)
-    .slice(0, 5);
+  out.confidence = Math.min(TOP_CAP, clampInt(out.confidence, 0, 100, top?.probability || 0));
+  out.ask_questions = ensureArray<string>(out.ask_questions).map((x) => (typeof x === "string" ? x.trim() : "")).filter(Boolean).slice(0, 5);
+  out.safe_actions = ensureArray<string>(out.safe_actions).map((x) => (typeof x === "string" ? x.trim() : "")).filter(Boolean).slice(0, 4);
+  if (out.safe_actions.length < 2) out.safe_actions = SAFE_DEFAULT[dir] || SAFE_DEFAULT["기타"];
   out.photo_request = typeof out.photo_request === "string" ? out.photo_request.trim() : "";
-
-  const top = specific?.[0]?.name || "";
-  out.ai_top_guess = top;
+  out.ai_top_guess = top?.name || "";
 
   if (out.status === "needs_more_photos") {
     out.final_judgement = "사진 다시 필요";
-    out.judgement_type = "불명";
-    if (!out.photo_request) {
-      out.photo_request = "증상 부위를 가까이(20~30cm), 그리고 포기 전체를 한 장 더 밝은 곳에서 찍어 주세요.";
-    }
-  } else if (top && p1 >= 65 && gap >= 25) {
-    out.status = "confident";
-    out.final_judgement = top;
-  } else if (top && p1 >= 40 && gap >= 10) {
+    if (!out.photo_request) out.photo_request = "증상 부위를 가까이(20~30cm), 그리고 포기 전체를 한 장 더 밝은 곳에서 찍어 주세요.";
+  } else if (dir === "정상" && dirP >= 60) {
+    out.status = "direction";
+    out.final_judgement = "정상으로 보입니다";
+  } else if (dirP >= 60) {
+    out.status = "direction";
+    out.final_judgement = `${dir} 쪽 문제로 보입니다 — ${top?.name} 가능성이 가장 높음`;
+  } else if (dirP >= 40) {
     out.status = "likely";
-    out.final_judgement = `${top} (추정)`;
-    if (!out.ask_questions.length) {
-      out.ask_questions = ["최근 1주 물 주기·비는 어땠나요?", "밭 전체에 나타났나요, 일부만인가요?"];
-    }
+    out.final_judgement = `${dir} 쪽일 가능성이 있습니다 — ${top?.name} 먼저 확인`;
   } else {
-    out.status = "uncertain";
-    out.final_judgement = UNCERTAIN_LABEL;
+    out.status = "open";
+    out.final_judgement = "여러 가능성이 비슷합니다 — 아래 구별법으로 확인하거나 상담을 받아 보세요";
   }
-
+  if (out.status !== "needs_more_photos" && !out.ask_questions.length) {
+    out.ask_questions = ["최근 1주 물 주기·비는 어땠나요?", "밭 전체에 나타났나요, 일부 포기만인가요?", "최근 2주 안에 약이나 영양제를 쳤나요?"];
+  }
   out.prompt_version = PROMPT_VERSION;
   return out;
 }
@@ -217,6 +256,7 @@ function enforceDiagnosisShape(input: any) {
       c?.why,
       "사진에서 보이는 단서만으로는 확정이 어려워 추가 확인이 필요합니다."
     ),
+    how_to_tell: typeof c?.how_to_tell === "string" ? c.how_to_tell : "",
   }));
 
   while (causes.length < 2) {
@@ -224,6 +264,7 @@ function enforceDiagnosisShape(input: any) {
       name: "원인 미상",
       probability: 50,
       why: "사진에서 보이는 단서만으로는 확정이 어려워 추가 확인이 필요합니다.",
+      how_to_tell: "",
     });
   }
   if (causes.length > 4) causes = causes.slice(0, 4);
@@ -374,6 +415,7 @@ export async function POST(req: Request) {
   "confidence": 0,
   "status": "confident|needs_more_photos",
   "ask_questions": [],
+  "safe_actions": [],
   "photo_request": "",
   "actions": {},
   "disclaimer": "",

@@ -4,7 +4,7 @@
 // 적용 위치: app/api/vision/route.ts (실제 진단 경로)
 // 기존 "실제 농약 제품명 3개를 반드시 제시" 규칙은 삭제함 — 농약은 서버가 등록 목록으로 붙인다.
 
-export const PROMPT_VERSION = "v2.1-2026-10-30";
+export const PROMPT_VERSION = "v3-2026-10-30";
 
 export const GUARD_PROMPT_DIAGNOSIS_V2 = `
 [포토닥터 진단 강제 규칙 v2]
@@ -46,10 +46,20 @@ export const GUARD_PROMPT_DIAGNOSIS_V2 = `
 6. 농약 이름은 AI가 지어내지 않는다
  - 농약 제품명·제조사를 쓰지 않는다. 등록 농약은 서버가 붙인다.
 
-7. 출력에 반드시 포함
+7. 사진 한 장으로 단정하지 않는다 — "70% 방향 + 30% 다른 가능성"
+ - 사진 한 장으로는 전문가도 단정하지 못한다. 1순위 probability 는 70 을 넘기지 않는다.
+ - possible_causes 는 3개를 낸다: 가장 가능성 높은 방향 1개 + 열어 둘 다른 가능성 2개.
+ - 각 원인에 "how_to_tell" 을 쓴다: 농민이 밭에서 직접 확인해 이 원인인지 가릴 수 있는 방법 한 줄.
+   (예: "새잎 끝만 타면 칼슘 결핍 쪽, 밭 전체가 시들면 물 부족 쪽", "잎 뒷면에 작은 벌레·탈피각이 있으면 진딧물")
+ - "safe_actions" 2~4개: 진단이 틀려도 손해 보지 않는, 어느 쪽이든 오늘 해도 되는 일.
+   (예: 병든 잎 따내 밭 밖으로, 물 상태 손으로 확인, 원인 확인 전 같은 약 반복 살포 금지, 3일 뒤 같은 자리 다시 찍기)
+
+8. 출력에 반드시 포함
  - judgement_type: "병해" | "해충" | "생리장해" | "약해" | "불명"
- - confidence: 0~100 정수 (1순위 판정에 대한 확신)
+ - confidence: 0~100 정수 (70 이하)
  - status: "confident" | "needs_more_photos"
+ - possible_causes[].how_to_tell: 문자열
+ - safe_actions: 문자열 배열
  - ask_questions: 문자열 배열 (없으면 [])
  - photo_request: 문자열 (needs_more_photos 일 때만, 아니면 "")
 `.trim();
