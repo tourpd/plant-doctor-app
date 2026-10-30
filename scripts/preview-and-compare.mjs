@@ -19,9 +19,18 @@ for (const line of fs.readFileSync(".env.local", "utf8").split("\n")) {
 if (!env.ADMIN_KEY) fail("ADMIN_KEY 없음");
 
 // 1) 미리보기 배포 (--prod 없음 = 운영 아님). 환경값은 이번 미리보기에만 넣음(설정 변경 없음)
+// 0) Vercel 로그인 확인 — 안 돼 있으면 로그인 화면을 띄움(브라우저에서 대표님이 직접 승인)
+let who = spawnSync("npx", ["-y", "vercel@latest", "whoami"], { encoding: "utf8" });
+if (who.status !== 0) {
+  log("🔑 Vercel 로그인이 필요합니다. 브라우저가 열리면 tourpd 계정으로 로그인해 주세요.");
+  spawnSync("npx", ["-y", "vercel@latest", "login"], { stdio: "inherit" });
+  who = spawnSync("npx", ["-y", "vercel@latest", "whoami"], { encoding: "utf8" });
+  if (who.status !== 0) fail("Vercel 로그인이 안 됐습니다. 다시 실행해 주세요.");
+}
+log("✅ Vercel 계정: " + (who.stdout || "").trim().split("\n").pop());
 log("① Vercel 미리보기 배포 중... (2~4분)");
 const args = ["-y", "vercel@latest", "deploy", "--yes"];
-for (const [k, v] of Object.entries(env)) { args.push("-e", `${k}=${v}`, "-b", `${k}=${v}`); }
+for (const [k, v] of Object.entries(env)) { args.push("--env", `${k}=${v}`, "--build-env", `${k}=${v}`); }
 const r = spawnSync("npx", args, { encoding: "utf8", stdio: ["inherit", "pipe", "inherit"], maxBuffer: 1 << 26 });
 fs.appendFileSync(LOG, r.stdout || "");
 const url = ((r.stdout || "").match(/https:\/\/[a-z0-9.-]+\.vercel\.app/gi) || []).pop();
