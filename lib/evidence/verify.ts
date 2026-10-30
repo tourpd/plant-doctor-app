@@ -39,6 +39,12 @@ export function applyWeatherGuard(result: any, w: WeatherSummary | null): string
   if (notes.length) {
     result.possible_causes.sort((a: any, b: any) => (Number(b?.probability) || 0) - (Number(a?.probability) || 0));
     result.final_judgement = result.possible_causes[0]?.name || result.final_judgement;
+    // 환경 원인을 내려서 결핍이 1순위로 "떠밀려 올라온" 경우는 확정 못 하게 (결핍은 마지막에 보는 원인)
+    const top = result.possible_causes[0];
+    if (top && /결핍/.test(String(top.name)) && Number(top.probability) > 55) {
+      top.probability = 55;
+      notes.push(`${top.name}: 다른 원인이 빠져 1순위가 됨 → 확정 대신 추정`);
+    }
   }
   return notes;
 }
@@ -88,7 +94,8 @@ export async function verifyWithEvidence(opts: {
 
   const resp = await openai.chat.completions.create({
     model: "gpt-4o",
-    temperature: 0.2,
+    temperature: 0,
+    seed: 7,
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: `${system}\n\n${VERIFY_RULES}` },

@@ -423,7 +423,8 @@ ${GUARD_PROMPT_DIAGNOSIS_V2}
     // ✅ GPT 호출
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
-      temperature: 0.3,
+      temperature: 0,
+      seed: 7, // 같은 사진 → 같은 답 (흔들림 줄이기)
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
