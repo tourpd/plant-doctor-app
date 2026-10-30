@@ -10,7 +10,7 @@ import { getFirestore } from "firebase-admin/firestore";
 
 const PREVIEW = (process.env.PREVIEW_URL || "").replace(/\/$/, "");
 if (!PREVIEW) { console.error("PREVIEW_URL 이 필요합니다."); process.exit(1); }
-if (/plant-doctor-app\.vercel\.app$/.test(PREVIEW)) { console.error("운영 주소입니다. 미리보기 주소를 넣으세요."); process.exit(1); }
+if (/^https:\/\/plant-doctor-app\.vercel\.app$/.test(PREVIEW)) { console.error("운영 주소입니다. 미리보기 주소를 넣으세요."); process.exit(1); }
 
 // .env.local 읽기
 for (const line of fs.readFileSync(".env.local", "utf8").split("\n")) {
@@ -69,7 +69,10 @@ const sum = {
   "대상": n, "오류": n - ok.length,
   "결핍 판정(전)": out.filter(o => isDeficit(o.before)).length,
   "결핍 판정(후)": ok.filter(o => isDeficit(o.after)).length,
+  "확정(후)": ok.filter(o => o.status === "confident").length,
+  "추정(후)": ok.filter(o => o.status === "likely").length,
   "전문가 확인 필요(후)": ok.filter(o => o.status === "uncertain").length,
+  "추정 1순위가 결핍(후)": ok.filter(o => isDeficit(o.after_guess)).length,
   "사진 다시 요청(후)": ok.filter(o => o.status === "needs_more_photos").length,
   "판정 바뀜": ok.filter(o => o.before !== o.after).length,
 };

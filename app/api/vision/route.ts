@@ -130,37 +130,62 @@ function applyMisdiagnosisGuards(input: any) {
   return out;
 }
 
-/** ✅ v2: 확신도·상태 판정을 서버에서도 강제 (AI가 규칙을 어겨도 여기서 바로잡음) */
+/** ✅ v2.1: 판정 단계를 서버가 정함 (AI가 규칙을 어겨도 여기서 바로잡음)
+ *  - confident(확정): 1순위 65% 이상, 2순위와 25%p 이상 차이
+ *  - likely(추정): 1순위 40% 이상, 2순위와 10%p 이상 차이 → "OOO (추정)" + 확인 질문
+ *  - uncertain(전문가 확인 필요): 그 밖 → 상담 연결
+ *  - 뭉뚱그린 이름(영양 결핍·생리장해·환경 스트레스 등)은 후보에서 지움
+ */
 const V2_TYPES = ["병해", "해충", "생리장해", "약해", "불명"];
-const V2_STATUS = ["confident", "uncertain", "needs_more_photos"];
 const UNCERTAIN_LABEL = "전문가 확인 필요";
+const VAGUE_NAME =
+  /^(영양\s*(결핍|부족|불균형|과다)?|(일반\s*)?생리(적)?\s*(장해|문제|스트레스)|환경(적)?\s*(스트레스|요인|문제)|병해(충)?(\s*피해)?|곰팡이병|세균병|바이러스병|원인\s*미상.*|기타)$/;
+
+function isVagueName(name: string) {
+  return VAGUE_NAME.test(String(name || "").replace(/\s+/g, " ").trim());
+}
 
 function applyV2Rules(out: any) {
-  const causes = ensureArray<any>(out.possible_causes);
-  const p1 = Number(causes?.[0]?.probability) || 0;
-  const p2 = Number(causes?.[1]?.probability) || 0;
+  const all = ensureArray<any>(out.possible_causes);
+  const specific = all.filter((c) => !isVagueName(c?.name));
+  out.vague_removed = all.filter((c) => isVagueName(c?.name)).map((c) => c?.name);
+  out.possible_causes = specific;
+
+  const p1 = Number(specific?.[0]?.probability) || 0;
+  const p2 = Number(specific?.[1]?.probability) || 0;
+  const gap = p1 - p2;
 
   out.judgement_type = V2_TYPES.includes(out.judgement_type) ? out.judgement_type : "불명";
   out.confidence = clampInt(out.confidence, 0, 100, p1);
-  out.status = V2_STATUS.includes(out.status) ? out.status : "confident";
   out.ask_questions = ensureArray<string>(out.ask_questions)
     .map((x) => (typeof x === "string" ? x.trim() : ""))
     .filter(Boolean)
     .slice(0, 5);
   out.photo_request = typeof out.photo_request === "string" ? out.photo_request.trim() : "";
 
-  // 규칙 3: 1순위 60% 미만 또는 1·2순위 차이 15%p 이내 → 모르겠음
-  if (out.status === "confident" && (p1 < 60 || out.confidence < 60 || p1 - p2 <= 15)) {
+  const top = specific?.[0]?.name || "";
+  out.ai_top_guess = top;
+
+  if (out.status === "needs_more_photos") {
+    out.final_judgement = "사진 다시 필요";
+    out.judgement_type = "불명";
+    if (!out.photo_request) {
+      out.photo_request = "증상 부위를 가까이(20~30cm), 그리고 포기 전체를 한 장 더 밝은 곳에서 찍어 주세요.";
+    }
+  } else if (top && p1 >= 65 && gap >= 25) {
+    out.status = "confident";
+    out.final_judgement = top;
+  } else if (top && p1 >= 40 && gap >= 10) {
+    out.status = "likely";
+    out.final_judgement = `${top} (추정)`;
+    if (!out.ask_questions.length) {
+      out.ask_questions = ["최근 1주 물 주기·비는 어땠나요?", "밭 전체에 나타났나요, 일부만인가요?"];
+    }
+  } else {
     out.status = "uncertain";
+    out.final_judgement = UNCERTAIN_LABEL;
   }
-  if (out.status !== "confident") {
-    out.ai_top_guess = causes?.[0]?.name || "";
-    out.final_judgement = out.status === "needs_more_photos" ? "사진 다시 필요" : UNCERTAIN_LABEL;
-    if (out.judgement_type !== "불명" && out.status === "needs_more_photos") out.judgement_type = "불명";
-  }
-  if (out.status === "needs_more_photos" && !out.photo_request) {
-    out.photo_request = "증상 부위를 가까이(20~30cm), 그리고 포기 전체를 한 장 더 밝은 곳에서 찍어 주세요.";
-  }
+
   out.prompt_version = PROMPT_VERSION;
   return out;
 }
@@ -337,7 +362,7 @@ export async function POST(req: Request) {
   "final_judgement": "",
   "judgement_type": "병해|해충|생리장해|약해|불명",
   "confidence": 0,
-  "status": "confident|uncertain|needs_more_photos",
+  "status": "confident|needs_more_photos",
   "ask_questions": [],
   "photo_request": "",
   "actions": {},
@@ -366,7 +391,7 @@ export async function POST(req: Request) {
   - doNow: 2~5개 (빈 배열 금지)
   - doNot: 1~3개 (빈 배열 금지)
   - mustCheck: 2~5개 (빈 배열 금지)
-- final_judgement는 비어있지 않은 문자열(최소 2글자)이며, possible_causes[0].name과 동일하거나 더 구체화된 표현이어야 함. 단, status가 uncertain이면 "전문가 확인 필요", needs_more_photos면 "사진 다시 필요".
+- final_judgement는 비어있지 않은 문자열(최소 2글자)이며, possible_causes[0].name과 동일하거나 더 구체화된 표현이어야 함. 단, needs_more_photos면 "사진 다시 필요". (확정/추정/전문가 확인 표시는 서버가 붙인다)
 - disclaimer와 emergency_form_url은 반드시 포함하며, 비어있지 않은 문자열이어야 함.
 - 어떤 필드도 null/undefined로 출력하지 말 것. 문자열은 "" 금지(필수 필드).
 - “확률 합계 100” 규칙을 만족하지 않으면, 출력 전에 스스로 수정하여 100으로 맞춘 후 출력.
