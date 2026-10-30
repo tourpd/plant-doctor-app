@@ -13,6 +13,8 @@ import { standardizeDiagnosis } from "../../../lib/standardizeDiagnosis";
 
 // ✅ 진단 지침 v2 (2026-10-30)
 import { GUARD_PROMPT_DIAGNOSIS_V2, PROMPT_VERSION } from "../../prompts/guard_prompt_diagnosis_v2";
+// ✅ 근거 재판정 (전문가 상담 사례 + 날씨)
+import { verifyWithEvidence } from "../../../lib/evidence/verify";
 
 // ✅ 시험용 기기 — 이 device_id 로 들어온 진단은 사진·DB·시트에 저장하지 않음(운영 기록 오염 방지)
 const TEST_DEVICE_ID = "claude-system-check";
@@ -20,6 +22,7 @@ const TEST_DEVICE_ID = "claude-system-check";
 // ✅ Edge 환경 방지
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // 2단계 판정까지 여유
 
 // ✅ OpenAI 설정
 const openai = new OpenAI({
@@ -305,6 +308,11 @@ export async function POST(req: Request) {
 
     if (!image) return json({ ok: false, error: "사진이 없습니다." }, 400);
 
+    // 진단 시점 (시험 기기만 과거 날짜 지정 가능 — 지난 진단을 그날 날씨로 재시험)
+    const observedRaw = (form.get("observed_at") as string) || "";
+    const observedAt =
+      device_id === TEST_DEVICE_ID && observedRaw && !isNaN(Date.parse(observedRaw)) ? new Date(observedRaw) : new Date();
+
     // ✅ (추가) 첫 방문 여부 판정
     let isFirstDiagnosis = true;
 
@@ -428,7 +436,21 @@ ${GUARD_PROMPT_DIAGNOSIS_V2}
     });
 
     const output = response.choices[0]?.message?.content || "{}";
-    const rawData = JSON.parse(output);
+    const firstPass = JSON.parse(output);
+
+    // ✅ 2단계: 전문가 사례·사진·날씨로 다시 판정 (실패하면 1차 판정 그대로)
+    let rawData = firstPass;
+    let evidence: any = null;
+    if (process.env.EVIDENCE_MODE !== "off" && firstPass?.status !== "needs_more_photos") {
+      try {
+        const v = await verifyWithEvidence({
+          openai, system, imageUrl, crop, region: `${province} ${city}`.trim(), at: observedAt, first: firstPass,
+        });
+        if (v) { rawData = v.result; evidence = v.evidence; }
+      } catch (e: any) {
+        console.error("⚠️ 근거 재판정 실패(1차 판정 사용):", e?.message || e);
+      }
+    }
 
     // ✅ 🔥 표준화 강제 적용 (핵심 추가)
     // - 표준화에서 예외가 나도 전체 진단/저장이 죽지 않게 안전망 추가
@@ -453,6 +475,8 @@ ${GUARD_PROMPT_DIAGNOSIS_V2}
 
     // ✅ (추가) 최종 형태 보정: 프론트/시트 안전
     data = enforceDiagnosisShape(data);
+    data.evidence = evidence; // 어떤 근거로 판정했는지 (사례 번호·날씨)
+    data.first_pass = (firstPass?.possible_causes || []).slice(0, 3).map((c: any) => `${c?.name} ${c?.probability}%`).join(" / ");
 
     // ✅ 시험 기기: 저장 없이 결과만 돌려줌 (운영 DB·시트·앱시트에 안 남음)
     if (device_id === TEST_DEVICE_ID) {

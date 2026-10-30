@@ -45,6 +45,8 @@ for (const r of rows) {
     fd.append("image", new Blob([await img.arrayBuffer()], { type }), "photo." + (type.split("/")[1] || "jpg"));
     fd.append("crop", r.crop || ""); fd.append("province", r.province || ""); fd.append("city", r.city || "");
     fd.append("device_id", "claude-system-check");
+    const at = r.createdAt?.toDate?.() || new Date(r.createdAt);
+    fd.append("observed_at", at.toISOString());
     const headers = process.env.VERCEL_BYPASS ? { "x-vercel-protection-bypass": process.env.VERCEL_BYPASS } : {};
     const res = await fetch(PREVIEW + "/api/vision", { method: "POST", body: fd, headers });
     after = await res.json();
@@ -58,6 +60,8 @@ for (const r of rows) {
     before: before.final_judgement || "", before_causes: fmt(before.possible_causes),
     after: after.final_judgement || "", after_causes: fmt(after.possible_causes),
     after_guess: after.ai_top_guess || "", type: after.judgement_type || "", confidence: after.confidence ?? "",
+    first_pass: after.first_pass || "", weather: after.evidence?.weather || "",
+    cases: (after.evidence?.cases || []).map((c) => `${c.crop}:${c.category}/${c.pest}`).join(" | "), case_images: after.evidence?.case_images ?? "",
     status: after.status || "", questions: (after.ask_questions || []).join(" / "), photo_request: after.photo_request || "", error: err,
   });
   console.log(`${i}/${rows.length} ${r.crop}: ${before.final_judgement} → ${after.final_judgement || "(오류) " + err}`);
