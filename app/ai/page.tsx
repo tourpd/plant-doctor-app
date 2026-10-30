@@ -308,6 +308,9 @@ export default function AiPage() {
             </ul>
           </div>
 
+          {/* ✅ 약박사(닥터Q) 처방 연결 — K-Agri Expo */}
+          <YakbaksaCard crop={result.crop} dx={result.final_judgement} prob={result?.possible_causes?.[0]?.probability} />
+
           {/* ✅ 자재 추천 정보 */}
           {(() => {
             const recommendation = getRecommendation(result.final_judgement);
@@ -437,3 +440,54 @@ const emergencyButton: React.CSSProperties = {
   textDecoration: 'none',
   cursor: 'pointer',
 };
+
+/* ===========================
+   약박사(닥터Q) 처방 카드
+   - 진단명을 K-Agri Expo로 보내 맞는 처방(지금 할 일 + 자재 + 몇 병?)을 받습니다.
+   - API가 안 되면 버튼만 보여 줍니다.
+=========================== */
+const EXPO = 'https://kagri-expo.com';
+
+function YakbaksaCard({ crop, dx, prob }: { crop?: string; dx?: string; prob?: number }) {
+  const [data, setData] = React.useState<null | { problem: { title: string; url: string }; products: Array<{ name: string; company: string | null; yakbaksa_url: string }> }>(null);
+  React.useEffect(() => {
+    if (!dx) return;
+    const q = new URLSearchParams({ crop: crop ?? '', dx });
+    fetch(`${EXPO}/api/dx?${q.toString()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j?.ok) setData(j); })
+      .catch(() => {});
+  }, [crop, dx]);
+  if (!dx) return null;
+  const q = new URLSearchParams({ crop: crop ?? '', dx, src: 'photodoctor' });
+  if (typeof prob === 'number') q.set('prob', String(prob));
+  const href = `${EXPO}/dx?${q.toString()}`;
+  return (
+    <div style={{ marginTop: 28, padding: 16, borderRadius: 16, border: '2px solid #15803d', background: '#f0fdf4', textAlign: 'left' }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <img src={`${EXPO}/doctor-q-face.png`} alt="닥터Q" width={48} height={48} style={{ borderRadius: 999, objectFit: 'cover' }} />
+        <div>
+          <div style={{ fontSize: 17, fontWeight: 900, color: '#14532d' }}>약박사 닥터Q 처방</div>
+          <div style={{ fontSize: 13, color: '#166534' }}>
+            {data ? `${data.problem.title} — 무엇을, 몇 병, 언제 뿌릴지` : '무엇을, 몇 병, 언제 뿌릴지 알려 드립니다'}
+          </div>
+        </div>
+      </div>
+      {data?.products?.length ? (
+        <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+          {data.products.slice(0, 2).map((p, i) => (
+            <a key={i} href={p.yakbaksa_url} target="_blank" rel="noopener noreferrer"
+               style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', borderRadius: 12, background: '#fff', border: '1px solid #bbf7d0', textDecoration: 'none', color: '#0f172a' }}>
+              <span><span style={{ fontSize: 12, color: '#16a34a', fontWeight: 800 }}>{p.company ?? ''}</span><br /><strong>{p.name}</strong></span>
+              <span style={{ fontSize: 13, fontWeight: 900, color: '#15803d' }}>몇 병? ›</span>
+            </a>
+          ))}
+        </div>
+      ) : null}
+      <a href={href} target="_blank" rel="noopener noreferrer"
+         style={{ display: 'block', marginTop: 12, padding: 14, borderRadius: 12, background: '#15803d', color: '#fff', fontWeight: 900, fontSize: 16, textAlign: 'center', textDecoration: 'none' }}>
+        약박사에게 처방 받기 ›
+      </a>
+    </div>
+  );
+}
