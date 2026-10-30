@@ -42,10 +42,19 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // ✅ 관리자 열쇠 (이 기기 브라우저에만 저장)
+  const [needKey, setNeedKey] = useState(false);
+  const [keyInput, setKeyInput] = useState('');
+  const [reloadTick, setReloadTick] = useState(0);
+  const readKey = () => { try { return localStorage.getItem('pd_admin_key') || ''; } catch { return ''; } };
+
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await fetch('/api/admin/diagnoses');
+        setLoading(true); setError(null);
+        const res = await fetch('/api/admin/diagnoses', { headers: { 'x-admin-key': readKey() }, cache: 'no-store' });
+        if (res.status === 401) { setNeedKey(true); return; }
+        setNeedKey(false);
         if (!res.ok) {
           throw new Error(`HTTP error! status: ${res.status}`);
         }
@@ -60,7 +69,21 @@ export default function AdminPage() {
     };
 
     fetchData();
-  }, []);
+  }, [reloadTick]);
+
+  if (needKey) {
+    return (
+      <main style={{ maxWidth: 420, margin: '80px auto', padding: 20 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 'bold', marginBottom: 12 }}>🔒 관리자 전용</h1>
+        <input type="password" value={keyInput} onChange={(e) => setKeyInput(e.target.value)}
+          placeholder="관리자 열쇠" style={{ width: '100%', padding: 12, fontSize: 16, border: '1px solid #ccc', borderRadius: 8 }} />
+        <button onClick={() => { try { localStorage.setItem('pd_admin_key', keyInput.trim()); } catch {} setReloadTick((t) => t + 1); }}
+          style={{ marginTop: 12, width: '100%', padding: 12, fontSize: 16, background: '#166534', color: '#fff', border: 'none', borderRadius: 8 }}>
+          열기
+        </button>
+      </main>
+    );
+  }
 
   return (
     <main style={{ maxWidth: 1000, margin: '0 auto', padding: 20 }}>

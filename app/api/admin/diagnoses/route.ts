@@ -3,6 +3,9 @@
 import { NextResponse } from "next/server";
 import { getApps, initializeApp, cert } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { isAdmin, adminDenied } from "../../../../lib/adminAuth";
+
+export const dynamic = "force-dynamic";
 
 // Firebase Admin 초기화
 if (!getApps().length) {
@@ -17,7 +20,9 @@ if (!getApps().length) {
 
 const db = getFirestore();
 
-export async function GET() {
+export async function GET(req: Request) {
+  if (!isAdmin(req)) return adminDenied();
+
   const snapshot = await db
     .collection('diagnoses')
     .orderBy('createdAt', 'desc')
@@ -26,5 +31,5 @@ export async function GET() {
 
   const data = snapshot.docs.map((doc) => doc.data());
 
-  return NextResponse.json(data);
+  return NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
 }

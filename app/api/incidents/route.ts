@@ -9,6 +9,7 @@ import {
   limit,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { isAdmin, adminDenied } from "../../../lib/adminAuth";
 
 export const runtime = "nodejs";
 
@@ -48,6 +49,7 @@ export async function POST(req: Request) {
  * GET /api/incidents?limit=20
  */
 export async function GET(req: Request) {
+  if (!isAdmin(req)) return adminDenied();
   try {
     const { searchParams } = new URL(req.url);
     const limitCount = Number(searchParams.get("limit") ?? 20);
