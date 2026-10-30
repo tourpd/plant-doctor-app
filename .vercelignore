@@ -1,0 +1,4 @@
+_backup
+scripts/out
+.env.local
+.env*.local
