@@ -32,9 +32,10 @@ console.log(`시험지 대상 ${rows.length}건 (예상 49건)`);
 
 const isDeficit = s => /결핍|영양\s*(부족|불균형)/.test(s || "");
 const out = [];
-let i = 0;
-for (const r of rows) {
-  i++;
+const PROG = "scripts/out/compare_progress.log";
+fs.mkdirSync("scripts/out", { recursive: true });
+fs.writeFileSync(PROG, `시작 ${new Date().toString()} 대상 ${rows.length}건\n`);
+async function one(r, i) {
   const before = r.result || {};
   let after = {}, err = "";
   try {
@@ -48,7 +49,7 @@ for (const r of rows) {
     const at = r.createdAt?.toDate?.() || new Date(r.createdAt);
     fd.append("observed_at", at.toISOString());
     const headers = process.env.VERCEL_BYPASS ? { "x-vercel-protection-bypass": process.env.VERCEL_BYPASS } : {};
-    const res = await fetch(PREVIEW + "/api/vision", { method: "POST", body: fd, headers });
+    const res = await fetch(PREVIEW + "/api/vision", { method: "POST", body: fd, headers, signal: AbortSignal.timeout(150000) });
     after = await res.json();
     if (!res.ok || after.ok === false && after.error) throw new Error(after.error || res.status);
     if (!after.test_mode) throw new Error("test_mode 아님 — 저장됐을 수 있음! 중단");
@@ -64,8 +65,13 @@ for (const r of rows) {
     cases: (after.evidence?.cases || []).map((c) => `${c.crop}:${c.category}/${c.pest}`).join(" | "), case_images: after.evidence?.case_images ?? "",
     status: after.status || "", questions: (after.ask_questions || []).join(" / "), photo_request: after.photo_request || "", error: err,
   });
-  console.log(`${i}/${rows.length} ${r.crop}: ${before.final_judgement} → ${after.final_judgement || "(오류) " + err}`);
+  const line = `${i}/${rows.length} ${r.crop}: ${before.final_judgement} → ${after.final_judgement || "(오류) " + err}`;
+  console.log(line); fs.appendFileSync(PROG, line + "\n");
 }
+// 3건씩 동시에 (순서는 번호로 다시 맞춤)
+let next = 0;
+await Promise.all([0, 1, 2].map(async () => { while (next < rows.length) { const k = next++; await one(rows[k], k + 1); } }));
+out.sort((a, b) => a.no - b.no);
 
 // 요약
 const n = out.length, ok = out.filter(o => !o.error);

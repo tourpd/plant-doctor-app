@@ -27,6 +27,8 @@ export const maxDuration = 60; // 2단계 판정까지 여유
 // ✅ OpenAI 설정
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
+  timeout: 40_000, // 한 번 호출이 40초 넘으면 끊음 (멈춤 방지)
+  maxRetries: 1,
 });
 
 // ✅ Firebase Admin SDK 초기화 (⚠️ 빌드 타임 실행 방지: 함수 안에서만 호출)
