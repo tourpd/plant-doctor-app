@@ -446,7 +446,7 @@ const emergencyButton: React.CSSProperties = {
    - 진단명을 K-Agri Expo로 보내 맞는 처방(지금 할 일 + 자재 + 몇 병?)을 받습니다.
    - API가 안 되면 버튼만 보여 줍니다.
 =========================== */
-const EXPO = 'https://kagri-expo.com';
+const EXPO = 'https://www.kagri-expo.com';
 
 function YakbaksaCard({ crop, dx, prob }: { crop?: string; dx?: string; prob?: number }) {
   const [data, setData] = React.useState<null | { problem: { title: string; url: string }; products: Array<{ name: string; company: string | null; yakbaksa_url: string; buy?: { label: string; url: string; kind: string; sub?: string | null } | null }>; coupang_notice?: string | null }>(null);
