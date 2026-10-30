@@ -450,12 +450,14 @@ const EXPO = 'https://www.kagri-expo.com';
 
 function YakbaksaCard({ crop, dx, prob }: { crop?: string; dx?: string; prob?: number }) {
   const [data, setData] = React.useState<null | { problem: { title: string; url: string }; products: Array<{ name: string; company: string | null; yakbaksa_url: string; buy?: { label: string; url: string; kind: string; sub?: string | null } | null }>; coupang_notice?: string | null }>(null);
+  const [none, setNone] = React.useState(false);
   React.useEffect(() => {
     if (!dx) return;
+    setData(null); setNone(false);
     const q = new URLSearchParams({ crop: crop ?? '', dx });
     fetch(`${EXPO}/api/dx?${q.toString()}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (j?.ok) setData(j); })
+      .then((j) => { if (j?.ok) setData(j); else setNone(true); })
       .catch(() => {});
   }, [crop, dx]);
   if (!dx) return null;
@@ -469,7 +471,7 @@ function YakbaksaCard({ crop, dx, prob }: { crop?: string; dx?: string; prob?: n
         <div>
           <div style={{ fontSize: 17, fontWeight: 900, color: '#14532d' }}>약박사 닥터Q 처방</div>
           <div style={{ fontSize: 13, color: '#166534' }}>
-            {data ? `${data.problem.title} — 무엇을, 몇 병, 언제 뿌릴지` : '무엇을, 몇 병, 언제 뿌릴지 알려 드립니다'}
+            {data ? `${data.problem.title} — 무엇을, 몇 병, 언제 뿌릴지` : none ? `'${dx}'은 아직 정해 둔 처방이 없어요. 닥터Q에게 물어보세요` : '무엇을, 몇 병, 언제 뿌릴지 알려 드립니다'}
           </div>
         </div>
       </div>
@@ -495,7 +497,7 @@ function YakbaksaCard({ crop, dx, prob }: { crop?: string; dx?: string; prob?: n
       ) : null}
       <a href={href} target="_blank" rel="noopener noreferrer"
          style={{ display: 'block', marginTop: 12, padding: 14, borderRadius: 12, background: '#15803d', color: '#fff', fontWeight: 900, fontSize: 16, textAlign: 'center', textDecoration: 'none' }}>
-        약박사에게 처방 받기 ›
+        {none ? '닥터Q에게 물어보기 ›' : '약박사에게 처방 받기 ›'}
       </a>
     </div>
   );
