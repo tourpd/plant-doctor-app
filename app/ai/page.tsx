@@ -449,7 +449,7 @@ const emergencyButton: React.CSSProperties = {
 const EXPO = 'https://www.kagri-expo.com';
 
 function YakbaksaCard({ crop, dx, prob }: { crop?: string; dx?: string; prob?: number }) {
-  const [data, setData] = React.useState<null | { problem: { title: string; url: string }; products: Array<{ name: string; company: string | null; yakbaksa_url: string; buy?: { label: string; url: string; kind: string; sub?: string | null } | null }>; coupang_notice?: string | null }>(null);
+  const [data, setData] = React.useState<null | { problem: { title: string; url: string }; products: Array<{ name: string; company: string | null; yakbaksa_url: string; buy?: { label: string; url: string; kind: string; sub?: string | null } | null }>; coupang_notice?: string | null; certified?: Array<{ name: string; company: string; tier: string; cert_no: string; buy_url: string | null }> }>(null);
   const [none, setNone] = React.useState(false);
   React.useEffect(() => {
     if (!dx) return;
@@ -475,9 +475,9 @@ function YakbaksaCard({ crop, dx, prob }: { crop?: string; dx?: string; prob?: n
           </div>
         </div>
       </div>
-      {data?.products?.length ? (
+      {data && (data.products?.length || data.certified?.length) ? (
         <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
-          {data.products.slice(0, 2).map((p, i) => (
+          {(data.products ?? []).slice(0, 2).map((p, i) => (
             <div key={i} style={{ padding: '10px 12px', borderRadius: 12, background: '#fff', border: '1px solid #bbf7d0' }}>
               <a href={p.yakbaksa_url} target="_blank" rel="noopener noreferrer"
                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', textDecoration: 'none', color: '#0f172a' }}>
@@ -492,6 +492,23 @@ function YakbaksaCard({ crop, dx, prob }: { crop?: string; dx?: string; prob?: n
               ) : null}
             </div>
           ))}
+          {data.certified?.length ? (
+            <div style={{ marginTop: 4, padding: '10px 12px', borderRadius: 12, background: '#fff', border: '1px dashed #86efac' }}>
+              <div style={{ fontSize: 12, fontWeight: 900, color: '#166534', marginBottom: 6 }}>🏛️ 나라 공시 · 검증 기업 제품</div>
+              {data.certified.slice(0, 2).map((c, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: i ? '1px solid #f1f5f9' : 'none' }}>
+                  <span style={{ minWidth: 0 }}>
+                    <strong style={{ fontSize: 14 }}>{c.name}</strong><br />
+                    <span style={{ fontSize: 11, color: '#64748b' }}>{c.company} · {c.tier} · {c.cert_no}</span>
+                  </span>
+                  {c.buy_url ? (
+                    <a href={c.buy_url} target="_blank" rel="noopener noreferrer sponsored"
+                       style={{ flexShrink: 0, padding: '8px 10px', borderRadius: 10, background: '#fff7ed', border: '1px solid #fdba74', color: '#c2410c', fontWeight: 900, fontSize: 13, textDecoration: 'none' }}>🛒 쿠팡</a>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
           {data.coupang_notice ? <div style={{ fontSize: 11, color: '#64748b' }}>{data.coupang_notice}</div> : null}
         </div>
       ) : null}
