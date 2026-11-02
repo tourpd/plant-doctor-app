@@ -1,5 +1,6 @@
 // app/api/vision/route.ts
 
+import { normalizeImage } from "../../../lib/serverImage";
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { v4 as uuidv4 } from "uuid";
@@ -372,8 +373,16 @@ export async function POST(req: Request) {
       if (!snap.empty) isFirstDiagnosis = false;
     }
 
-    const buffer = Buffer.from(await image.arrayBuffer());
-    const mime = image.type || "image/jpeg";
+    // ✅ 사진 표준화: HEIC 변환·회전·축소 (갤럭시 Z폴드 등 인식 실패 해결)
+    const rawBuffer = Buffer.from(await image.arrayBuffer());
+    if (rawBuffer.length < 100) return json({ ok: false, error: "사진 파일이 비어 있습니다. 다시 찍어 올려 주세요." }, 400);
+    const norm = await normalizeImage(rawBuffer, image.type || "", (image as any).name || "");
+    const buffer = norm.buffer;
+    const mime = norm.mime;
+    console.log("[vision] image", image.type || "(no type)", (image as any).name || "", norm.note);
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(mime)) {
+      return json({ ok: false, error: "이 사진 형식은 읽을 수 없습니다. 카메라 설정에서 '고효율 사진'을 끄거나 화면 캡처한 사진으로 올려 주세요." }, 415);
+    }
     const base64 = buffer.toString("base64");
     const imageUrl = `data:${mime};base64,${base64}`;
 

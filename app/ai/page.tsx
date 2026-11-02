@@ -1,44 +1,509 @@
-import React from "react";
+'use client';
 
-export const dynamic = "force-dynamic";
+import React, { useState, useRef, useEffect } from 'react';
+import '@/app/globals.css';
 
-const PHOTO_DOCTOR_URL =
-  "https://plant-doctor-app.vercel.app/ai";
+// ✅ 자재 추천 함수 임포트
+import { getRecommendation } from '../api/vision/utils/recommendMaterial';
+import { prepareImageForUpload, SERVER_LIMIT } from '../../lib/clientImage';
 
-export default function AIConsultPage() {
+type ApiResult = {
+  ok: true;
+  crop: string;
+  region: string;
+  observations: string[];
+  possible_causes: { name: string; probability: number; why: string; how_to_tell?: string; direction?: string }[];
+  final_judgement: string;
+  status?: 'direction' | 'likely' | 'open' | 'needs_more_photos';
+  direction?: string;
+  direction_share?: number;
+  safe_actions?: string[];
+  ask_questions?: string[];
+  photo_request?: string;
+  actions: {
+    doNow: string[];
+    doNot: string[];
+    mustCheck: string[];
+  };
+};
+
+type ApiFail = {
+  ok: false;
+  error: string;
+};
+
+export default function AiPage() {
+  const [crop, setCrop] = useState('');
+  const [province, setProvince] = useState('');
+  const [city, setCity] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<ApiResult | ApiFail | null>(null);
+
+  // ✅ (추가) 스피너 아래 문구 상태
+  const [loadingText, setLoadingText] = useState('🔍 AI가 병해 증상을 분석 중입니다…');
+
+  const magicSoundRef = useRef<HTMLAudioElement>(null); // 🔊 성공 효과음(1회)
+  const clickSoundRef = useRef<HTMLAudioElement>(null); // 🔁 진단 중 루프 사운드
+  const resultRef = useRef<HTMLDivElement>(null);
+
+  // ✅ (추가) 기기 고정 device_id 생성/저장 (브라우저에 1회 생성 후 계속 재사용)
+  const getOrCreateDeviceId = () => {
+    if (typeof window === 'undefined') return '';
+    const key = 'photodoctor_device_id';
+    let id = localStorage.getItem(key);
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem(key, id);
+    }
+    return id;
+  };
+
+  useEffect(() => {
+    const savedCrop = localStorage.getItem('crop');
+    const savedProvince = localStorage.getItem('province');
+    const savedCity = localStorage.getItem('city');
+    if (savedCrop) setCrop(savedCrop);
+    if (savedProvince) setProvince(savedProvince);
+    if (savedCity) setCity(savedCity);
+  }, []);
+
+  useEffect(() => {
+    if (result && result.ok && resultRef.current) {
+      resultRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [result]);
+
+  // ✅ (추가) 로딩 시작 → 문구 초기화, 8초 후 문구 변경
+  useEffect(() => {
+    if (!loading) return;
+
+    setLoadingText('🔍 AI가 병해 신호를 분석 중입니다…');
+
+    const t = setTimeout(() => {
+      setLoadingText('⏳ 정확도를 높이는 중입니다… \n잠시만 더 기다려 주세요.');
+    }, 8000);
+
+    return () => clearTimeout(t);
+  }, [loading]);
+
+  // ✅ (추가) 사용자 제스처(버튼 클릭) 시점에 오디오 잠금 해제용
+  const unlockSound = async () => {
+    const a = magicSoundRef.current;
+    if (!a) return;
+    try {
+      a.volume = 0.3;
+      a.currentTime = 0;
+      await a.play();
+      a.pause();
+      a.currentTime = 0;
+    } catch (err) {
+      console.warn('효과음 unlock 실패:', err);
+    }
+  };
+
+  // ✅ 사진 선택 → 휴대폰에서 바로 세우고 줄여서 준비 (갤럭시 Z폴드 고화소·모션포토 업로드 실패 해결)
+  const [preparing, setPreparing] = useState(false);
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = ''; // 같은 사진 다시 골라도 동작하게
+    if (!f) return;
+    setResult(null);
+    setPreparing(true);
+    try {
+      const prepared = await prepareImageForUpload(f);
+      if (prepared.file.size > SERVER_LIMIT) {
+        setFile(null);
+        setPreview('');
+        setResult({ ok: false, error: '사진 용량이 너무 큽니다. 카메라 설정에서 사진 크기를 12MP로 바꾸거나, 화면 캡처한 사진으로 다시 올려 주세요.' });
+        return;
+      }
+      setFile(prepared.file);
+      // 미리보기: 줄인 JPEG가 있으면 그것으로 (HEIC 원본은 휴대폰이 못 보여줄 수 있음)
+      setPreview(prepared.converted ? URL.createObjectURL(prepared.file) : URL.createObjectURL(f));
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  // 🔁 진단 루프 시작 (clickSoundRef 사용)
+  const startDiagnoseLoop = () => {
+    const a = clickSoundRef.current;
+    if (!a) return;
+    try {
+      a.volume = 0.20;
+      a.loop = true;
+      a.currentTime = 0;
+      a.play().catch((e) => console.warn('진단 루프 실패:', e));
+    } catch {}
+  };
+
+  // 🔇 진단 루프 정지 (finally에서 무조건 호출)
+  const stopDiagnoseLoop = () => {
+    const a = clickSoundRef.current;
+    if (!a) return;
+    try {
+      a.pause();
+      a.currentTime = 0;
+      a.loop = false;
+    } catch {}
+  };
+
+  const submit = async () => {
+    await unlockSound();
+
+    // 🔁 시작 전에 혹시 남아있던 루프 정리
+    stopDiagnoseLoop();
+
+    // ✅ 입력 검증(기존 로직 유지)
+    if (!file || !province || !city || !crop) {
+      alert('사진, 작물명, 도, 시/군 정보를 모두 입력해 주세요.');
+      stopDiagnoseLoop();
+      return;
+    }
+
+    // ✅ (필수) fd가 원문에서 누락되어 있어 최소로 복구 (기존 흐름 유지)
+    const fd = new FormData();
+    fd.append('image', file);
+    fd.append('crop', crop);
+    fd.append('province', province);
+    fd.append('city', city);
+    fd.append('device_id', getOrCreateDeviceId()); // ✅ 핵심: 첫/재방문 판정용
+
+    // 🔁 진단 루프 시작
+    startDiagnoseLoop();
+
+    setLoading(true);
+
+    try {
+      const res = await fetch('/api/vision', { method: 'POST', body: fd });
+      const text = await res.text();
+      let data: any = null;
+      try { data = JSON.parse(text); } catch { data = null; }
+      if (!data) {
+        const msg = res.status === 413
+          ? '사진 용량이 너무 커서 서버가 받지 못했습니다. 다른 사진으로 다시 시도해 주세요.'
+          : `진단 서버 응답 오류 (${res.status}). 잠시 후 다시 시도해 주세요.`;
+        data = { ok: false, error: msg };
+      }
+      setResult(data);
+
+      // ✅ 성공 시 매직 사운드 1회 재생
+      if (data?.ok) {
+        const m = magicSoundRef.current;
+        if (m) {
+          m.volume = 0.12;
+          m.loop = false;
+          m.currentTime = 0;
+          m.play().catch((err: any) => console.warn('효과음 재생 오류:', err));
+        }
+      }
+    } catch (err) {
+      setResult({ ok: false, error: '서버 오류 또는 네트워크 문제' });
+    } finally {
+      setLoading(false);
+      stopDiagnoseLoop(); // ✅ 핵심: 성공/실패 상관없이 “무조건” 멈춤
+    }
+  };
+
   return (
-    <main style={S.wrap}>
-      <section style={S.frameWrap}>
-        <iframe
-          src={PHOTO_DOCTOR_URL}
-          title="포토닥터"
-          style={S.iframe}
-        />
-      </section>
+    <main style={{ maxWidth: 640, margin: '0 auto', padding: 20 }}>
+      {/* ✅ clickSoundRef를 “진단 중 루프”로 사용 */}
+      <audio
+        ref={clickSoundRef}
+        src="/sounds/click-buttons-ui-menu-sounds-effects-button-10-205397.mp3"
+        preload="auto"
+        loop
+      />
+
+      {/* 🔊 성공 효과음 (1회 재생은 submit에서) */}
+      <audio ref={magicSoundRef} src="/sounds/magic-03-278824.mp3" preload="auto" />
+
+      <h1 style={{ fontSize: 32, fontWeight: 'bold', color: '#2e7d32', marginBottom: 8, textAlign: 'center' }}>
+        🌱 포토닥터 진단
+      </h1>
+      <p style={{ marginTop: 0, fontSize: 17, color: '#3a372fff', textAlign: 'center' }}>
+        한국농수산TV가 농민을 위해 만든 AI 작물 진단 서비스입니다.
+      </p>
+
+      <div style={{ marginTop: 24 }}>
+        <input type="text" placeholder="작물명 (예: 고추)" value={crop} onChange={(e) => setCrop(e.target.value)} style={inputStyle} />
+        <input type="text" placeholder="도 (예: 충남)" value={province} onChange={(e) => setProvince(e.target.value)} style={inputStyle} />
+        <input type="text" placeholder="시/군 (예: 홍성군)" value={city} onChange={(e) => setCity(e.target.value)} style={inputStyle} />
+
+        <label htmlFor="file" style={fileUploadLabel}>
+          📷 <strong>사진 선택 (1장)</strong>
+          <p style={{ fontSize: 13, marginTop: 8, color: '#666' }}>이미 찍은 사진을 선택해 주세요.</p>
+        </label>
+
+        <input type="file" id="file" accept="image/*" onChange={handleFileChange} style={{ display: 'none' }} />
+
+        {preview && (
+          <div style={{ position: 'relative', marginTop: 16 }}>
+            <img
+              src={preview}
+              alt="미리보기"
+              style={{
+                width: '100%',
+                maxHeight: 300,
+                objectFit: 'contain',
+                border: '1px solid #ccc',
+                borderRadius: 8,
+              }}
+            />
+            {loading && (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexDirection: 'column',
+                  gap: 12,
+                }}
+              >
+                <div className="spinner" />
+                <p
+                  style={{
+                    marginTop: 12,
+                    padding: '8px 14px',
+                    background: 'rgba(255,255,255,0.88)',
+                    borderRadius: 20,
+                    fontSize: 15,
+                    color: '#c62828',
+                    fontWeight: 'bold',
+                    textAlign: 'center',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+                  }}
+                >
+                  {loadingText}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        <button onClick={submit} disabled={loading || preparing} style={btnStyle}>
+          {loading ? '진단 중...' : '진단 시작'}
+        </button>
+      </div>
+
+      {preparing && (
+        <p style={{ textAlign: 'center', color: '#555', marginTop: 12 }}>📷 사진을 준비하는 중입니다…</p>
+      )}
+      {result && !result.ok && (
+        <div style={{ marginTop: 20, padding: 16, borderRadius: 12, background: '#fff3f3', border: '1px solid #f5c2c2', color: '#b71c1c', fontSize: 16, lineHeight: 1.5 }}>
+          ⚠️ {result.error || '진단에 실패했습니다. 다시 시도해 주세요.'}
+        </div>
+      )}
+      {result && result.ok && (
+        <div ref={resultRef} style={resultBox}>
+          <div style={{ textAlign: 'left' }}>
+            <h2 style={sectionTitle}>👀 관찰 결과</h2>
+            <p>
+              🌾 작물: <strong>{result.crop}</strong> / 지역: <strong>{result.region}</strong>
+            </p>
+
+            <ul>
+              {(Array.isArray(result.observations) ? result.observations : []).map((o, i) => (
+                <li key={i}>• {o}</li>
+              ))}
+            </ul>
+
+            {/* 📌 판단 방향 (사진 한 장 → 방향 70% + 다른 가능성 열어 두기) */}
+            <h3 style={sectionTitle}>📌 판단</h3>
+            <div style={{ padding: 14, borderRadius: 12, marginBottom: 8,
+              background: result.status === 'direction' ? '#e8f5e9' : result.status === 'likely' ? '#fff8e1' : '#f3f4f6',
+              border: '1px solid ' + (result.status === 'direction' ? '#a5d6a7' : result.status === 'likely' ? '#ffe082' : '#d1d5db') }}>
+              {result.direction && result.status !== 'needs_more_photos' && (
+                <div style={{ fontSize: 14, color: '#555', marginBottom: 4 }}>
+                  {result.status === 'direction' ? '✅ 방향이 뚜렷함' : result.status === 'likely' ? '🟡 가능성 높음' : '⚪ 여러 가능성'}
+                  {' · '}<strong>{result.direction}</strong> 쪽 {typeof result.direction_share === 'number' ? `${result.direction_share}%` : ''}
+                </div>
+              )}
+              <p style={{ fontWeight: 'bold', color: '#1b5e20', fontSize: 18, margin: 0 }}>{result.final_judgement}</p>
+            </div>
+            {result.photo_request && (
+              <p style={{ background: '#e3f2fd', padding: 10, borderRadius: 8 }}>📷 {result.photo_request}</p>
+            )}
+
+            <h3 style={sectionTitle}>🧭 원인 가능성</h3>
+            <ul style={{ listStyle: 'none', paddingLeft: 0 }}>
+              {(Array.isArray(result.possible_causes) ? result.possible_causes : []).map((c, i) => (
+                <li key={i} style={{ marginBottom: 12, padding: 10, borderRadius: 8, background: '#fafafa', border: '1px solid #eee' }}>
+                  <div><strong>{c?.name ?? '원인 미상'}</strong> {c?.probability ?? '-'}%</div>
+                  {c?.why && <div style={{ fontSize: 15, color: '#444', marginTop: 4 }}>{c.why}</div>}
+                  {c?.how_to_tell && <div style={{ fontSize: 15, color: '#0d47a1', marginTop: 4 }}>🔎 구별법: {c.how_to_tell}</div>}
+                </li>
+              ))}
+            </ul>
+            <p style={{ fontSize: 13, color: '#777', marginTop: -4 }}>
+              ※ 사진 한 장만으로는 확정할 수 없습니다. 위 구별법으로 밭에서 직접 확인해 보세요.
+            </p>
+
+            <h3 style={sectionTitle}>✅ 지금 안전하게 할 일</h3>
+            <ul>
+              {(Array.isArray(result.safe_actions) && result.safe_actions.length ? result.safe_actions
+                : Array.isArray(result?.actions?.doNow) ? result.actions.doNow : []).map((t, i) => (
+                <li key={i}>• {t}</li>
+              ))}
+            </ul>
+
+            <h3 style={sectionTitle}>⛔ 하지 말 것</h3>
+            <ul>
+              {(Array.isArray(result?.actions?.doNot) ? result.actions.doNot : []).map((t, i) => (
+                <li key={i}>• {t}</li>
+              ))}
+            </ul>
+
+            {Array.isArray(result.ask_questions) && result.ask_questions.length > 0 && (
+              <>
+                <h3 style={sectionTitle}>❓ 더 정확하게 알려면</h3>
+                <ul>
+                  {result.ask_questions.map((t, i) => (<li key={i}>• {t}</li>))}
+                </ul>
+              </>
+            )}
+
+            <h3 style={sectionTitle}>🔍 반드시 확인</h3>
+            <ul>
+              {(Array.isArray(result?.actions?.mustCheck) ? result.actions.mustCheck : []).map((t, i) => (
+                <li key={i}>• {t}</li>
+              ))}
+            </ul>
+          </div>
+
+          {/* ✅ 자재 추천 정보 */}
+          {(() => {
+            // 방향이 뚜렷할 때만 자재 안내 (불확실할 때 제품을 권하지 않음)
+            if (result.status && result.status !== 'direction') return null;
+            const topName = result.possible_causes?.[0]?.name || '';
+            const recommendation = getRecommendation(topName) || getRecommendation(result.final_judgement);
+            if (!recommendation) return null;
+
+            return (
+              <div style={{ marginTop: 32, textAlign: 'left' }}>
+                <h3 style={{ ...sectionTitle, color: '#33691e' }}>🧪 자재 추천 <span style={{ fontSize: 13, color: '#888', fontWeight: 'normal' }}>(제품 안내 · 광고 포함)</span></h3>
+                <p style={{ whiteSpace: 'pre-line', fontSize: 15, lineHeight: 1.6 }}>
+                  {recommendation.usageGuide}
+                </p>
+                <div style={{ marginTop: 16 }}>
+                  {(recommendation.materials ?? []).map((mat, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        marginBottom: 16,
+                        padding: 12,
+                        border: '1px solid #ccc',
+                        borderRadius: 8,
+                        backgroundColor: '#fff',
+                      }}
+                    >
+                      <strong style={{ fontSize: 16 }}>{mat.title}</strong>
+                      {mat.description && <p style={{ marginTop: 4 }}>{mat.description}</p>}
+                      {mat.howToUse && (
+                        <p style={{ marginTop: 6, fontSize: 14 }}>
+                          <strong>👉 사용법:</strong> {mat.howToUse}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          <p style={{ marginTop: 20, fontSize: 14, color: '#888', textAlign: 'center' }}>
+            ⚠️ 이 결과는 AI의 참고 진단이며, 최종 판단은 농업인 본인의 책임입니다.
+          </p>
+
+          <a
+            href="https://docs.google.com/forms/d/e/1FAIpQLSdKgcwl_B-10yU0gi4oareM4iajMPND6JtGIZEwjbwPbnQBEg/viewform"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={emergencyButton}
+          >
+            🚨 농사톡톡 119 출동 요청
+          </a>
+        </div>
+      )}
+
+      {result && !result.ok && (
+        <div style={{ marginTop: 20, color: 'red', fontWeight: 'bold' }}>
+          ❌ 오류: {result.error}
+        </div>
+      )}
     </main>
   );
 }
 
-const S: Record<string, React.CSSProperties> = {
-  wrap: {
-    minHeight: "100vh",
-    background: "#f3f4f6",
-  },
+// 🔧 스타일 정의
+const inputStyle: React.CSSProperties = {
+  display: 'block',
+  width: '100%',
+  padding: 12,
+  marginTop: 12,
+  borderRadius: 6,
+  border: '1px solid #ccc',
+  fontSize: 16,
+  color: '#333',
+  fontWeight: 'bold',
+};
 
-  frameWrap: {
-    width: "100%",
-    maxWidth: 1200,
-    margin: "0 auto",
-    overflow: "hidden",
-    background: "#ffffff",
-  },
+const fileUploadLabel: React.CSSProperties = {
+  border: '2px dashed #4caf50',
+  padding: 20,
+  textAlign: 'center',
+  marginTop: 16,
+  cursor: 'pointer',
+  borderRadius: 10,
+  display: 'block',
+  color: '#333',
+  background: '#f0fff4',
+};
 
-  iframe: {
-    width: "100%",
-    height: "100vh",
-    minHeight: 1400,
-    border: "none",
-    display: "block",
-    background: "#ffffff",
-  },
+const btnStyle: React.CSSProperties = {
+  marginTop: 24,
+  width: '100%',
+  padding: 14,
+  backgroundColor: '#4caf50',
+  color: 'white',
+  border: 'none',
+  borderRadius: 6,
+  fontSize: 16,
+  fontWeight: 'bold',
+  cursor: 'pointer',
+};
+
+const resultBox: React.CSSProperties = {
+  marginTop: 32,
+  padding: 20,
+  border: '1px solid #ddd',
+  borderRadius: 10,
+  backgroundColor: '#fafafa',
+};
+
+const sectionTitle: React.CSSProperties = {
+  marginTop: 24,
+  fontSize: 18,
+  fontWeight: 'bold',
+  color: '#2e7d32',
+};
+
+const emergencyButton: React.CSSProperties = {
+  display: 'block',
+  marginTop: 28,
+  width: '100%',
+  padding: 14,
+  backgroundColor: '#d32f2f',
+  color: 'white',
+  border: 'none',
+  borderRadius: 6,
+  fontSize: 16,
+  fontWeight: 'bold',
+  textAlign: 'center',
+  textDecoration: 'none',
+  cursor: 'pointer',
 };
