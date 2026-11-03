@@ -30,13 +30,13 @@ const ALIAS: Record<string, string[]> = {
   배추: ["배추", "가을배추", "봄배추", "고랭지배추", "얼갈이배추"], 상추: ["상추", "결구상추"], 딸기: ["딸기"],
 };
 const norm = (s: string) => String(s || "").replace(/\(.*?\)|\s/g, "");
-function cropKeys(crop: string): string[] {
+export function cropKeys(crop: string): string[] {
   const c = norm(crop).replace(/잎$/, "");
   for (const list of Object.values(ALIAS)) if (list.includes(c) || list.includes(norm(crop))) return list;
   return c ? [c] : [];
 }
 /** 같은 작물인지: 이름이 같거나, 앞에 수식어만 붙은 경우(가을배추→배추). "배"가 "배추"에, "고추"가 "고추나무"에 걸리지 않게 함 */
-function sameCrop(caseCrop: string, keys: string[]) {
+export function sameCrop(caseCrop: string, keys: string[]) {
   const c = norm(caseCrop);
   return keys.some((k) => c === k || (c.endsWith(k) && k.length >= 2) || (k.length >= 2 && c.length > k.length && c.endsWith(k)));
 }

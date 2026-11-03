@@ -1,6 +1,8 @@
 // 2단계 재판정: 1차 판정 + 전문가 상담 사례(사진 포함) + 진단 전 7일 날씨 → 다시 판정
 import { findSimilarCases, fetchImageDataUrl, type ExpertCase } from "./cases";
 import { getWeather, type WeatherSummary } from "./weather";
+import { liveConsultCases, officialSheets, surveyNow, type SurveyNow } from "./live";
+import type { PestSheet } from "../ncpms/client";
 
 export const VERIFY_RULES = `
 [2단계 재판정 규칙 — 근거로 다시 판정한다]
@@ -13,7 +15,9 @@ export const VERIFY_RULES = `
    - 비 온 날이 많고 습도가 높으면 곰팡이병·세균병·과습 피해를 후보로 검토한다.
    - 날씨 자료가 없으면 환경 원인(건조·일소·고온·과습)의 확률을 낮게 잡고 ask_questions 로 확인한다.
 3. 건조·일소만 반복하는 판정을 피한다. 사진에 병반·곰팡이·벌레 흔적이 있으면 병해충을 먼저 본다.
-4. 각 원인의 why 끝에 근거를 괄호로 쓴다. 예: "(사례 2와 증상 비슷)", "(최근 7일 강수 0mm, 최고 31℃)", "(사진 근거만)".
+4. 각 원인의 why 끝에 근거를 괄호로 쓴다. 예: "(사례 2와 증상 비슷)", "(최근 7일 강수 0mm, 최고 31℃)", "(도감 증상과 일치)", "(이번 예찰 경북 발생)", "(사진 근거만)".
+   - 농진청 도감 증상이 사진과 맞지 않는 후보는 확률을 낮춘다. 도감의 발생 조건(온도·습도)이 날씨와 맞으면 근거로 쓴다.
+   - 예찰에서 그 지역에 이번에 나온 병해충은 후보로 검토하되, 사진 증상이 없으면 1순위로 올리지 않는다(예찰은 지역 정보일 뿐 이 밭의 사진이 아님).
 5. possible_causes 2~3개(가장 가능성 높은 것 + 다른 가능성), 확률은 정직하게(상한은 서버가 맞춤), 건강해 보이면 "정상"을 1순위로, 뚜렷한 병반·벌레는 그대로 1순위로, 각 원인에 how_to_tell(농민이 직접 가리는 법), safe_actions(어느 쪽이든 해도 손해 없는 일 2~4개)를 쓴다.
 6. 출력 JSON 형식은 1차와 같고, "evidence_used": ["사례 2", "날씨"] 처럼 실제로 쓴 근거를 적는다.
 `.trim();
@@ -58,7 +62,8 @@ export function applyWeatherGuard(result: any, w: WeatherSummary | null): string
 }
 
 export type Evidence = {
-  cases: { id: number; crop: string; region: string; month: string; category: string; pest: string }[];
+  cases: { id: number; crop: string; region: string; month: string; category: string; pest: string; live?: boolean }[];
+  ncpms: { live_cases: number; sheets: string[]; survey: string | null; errors: string[] };
   case_images: number;
   weather: string | null;
   weather_guard: string[];
@@ -70,11 +75,20 @@ export async function verifyWithEvidence(opts: {
   const { openai, system, imageUrl, crop, region, at, first } = opts;
   const obs = (first?.observations || []).join(" ");
   const cands = (first?.possible_causes || []).map((c: any) => c?.name).filter(Boolean).join(", ");
-  const [cases, weather] = await Promise.all([
-    findSimilarCases(crop, `${crop} | 증상: ${obs} | 후보: ${cands}`, 5),
+  const query = `${crop} | 증상: ${obs} | 후보: ${cands}`;
+  const ncpmsErrors: string[] = [];
+  const live = process.env.NCPMS_LIVE !== "off" && !!process.env.NCPMS_API_KEY; // NCPMS_LIVE=off 이면 실시간 호출 끔(색인만)
+  const [liveCases, indexCases, sheets, survey, weather] = await Promise.all([
+    live ? liveConsultCases(crop, query, 3, ncpmsErrors) : Promise.resolve([] as ExpertCase[]),
+    findSimilarCases(crop, query, 5),
+    live ? officialSheets(crop, (first?.possible_causes || []).map((c: any) => c?.name), ncpmsErrors) : Promise.resolve([] as PestSheet[]),
+    live ? surveyNow(crop, region, at, ncpmsErrors) : Promise.resolve(null as SurveyNow | null),
     getWeather(region, at),
   ]);
-  if (!cases.length && !weather) return null;
+  // 실시간 상담 사례 먼저, 모자라면 저장해 둔 사례 색인(10/30 수집)으로 채움 — 같은 사례는 한 번만
+  const liveIds = new Set(liveCases.map((c) => Number(c.id)));
+  const cases: ExpertCase[] = [...(liveCases as ExpertCase[]), ...indexCases.filter((c) => !liveIds.has(Number(c.id)))].slice(0, 5);
+  if (!cases.length && !weather && !sheets.length && !survey) return null;
 
   // 사례 사진 (상위 사례에서 최대 3장)
   const refImgs: { n: number; url: string }[] = [];
@@ -94,6 +108,8 @@ export async function verifyWithEvidence(opts: {
     `[1차 판정]\n${JSON.stringify({ observations: first?.observations, possible_causes: first?.possible_causes, judgement_type: first?.judgement_type }, null, 0)}\n\n` +
     `[진단 전 7일 날씨]\n${weather ? weather.text : "자료 없음"}\n\n` +
     `[비슷한 농진청 전문가 상담 사례]\n${caseText || "없음"}\n\n` +
+    `[농진청 병해충 도감 — 1차 후보]\n${sheets.map((d) => `${d.kind} ${d.name}(${d.crop}): 증상 ${d.symptoms.slice(0, 220)} / 발생 조건 ${d.condition.slice(0, 120)}`).join("\n") || "없음"}\n\n` +
+    `[농진청 병해충 예찰 — 올해 최근 회차]\n${survey ? survey.text : "자료 없음"}\n\n` +
     `첫 번째 사진이 농민 사진이다. 그 뒤 사진은 순서대로 ${refImgs.map((r) => `사례 ${r.n}`).join(", ") || "없음"}의 사진이다.\n` +
     `위 근거로 다시 판정해 JSON 으로만 답하라.`;
 
@@ -116,7 +132,8 @@ export async function verifyWithEvidence(opts: {
   return {
     result: out,
     evidence: {
-      cases: cases.map((c) => ({ id: c.id, crop: c.crop, region: `${c.sido} ${c.sigungu}`.trim(), month: c.month, category: c.category, pest: c.pest })),
+      cases: cases.map((c) => ({ id: c.id, crop: c.crop, region: `${c.sido} ${c.sigungu}`.trim(), month: c.month, category: c.category, pest: c.pest, live: liveIds.has(Number(c.id)) })),
+      ncpms: { live_cases: liveCases.length, sheets: sheets.map((d) => `${d.kind} ${d.name}`), survey: survey?.text || null, errors: ncpmsErrors.slice(0, 5) },
       case_images: refImgs.length,
       weather: weather?.text || null,
       weather_guard: guard,
