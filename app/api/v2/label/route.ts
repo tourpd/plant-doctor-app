@@ -73,6 +73,12 @@ function safeJsonParse(raw: string): unknown {
   throw new Error("JSON 파싱 실패");
 }
 
+/** OpenAI 오류의 세부 코드 (insufficient_quota, rate_limit_exceeded 등) */
+function errCode(e: unknown): string {
+  const x = e as { code?: string; type?: string; error?: { code?: string; type?: string } };
+  return x?.code || x?.error?.code || x?.type || x?.error?.type || "";
+}
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
@@ -148,22 +154,27 @@ export async function POST(req: Request) {
       } catch (e) {
         lastErr = e;
         const status = (e as { status?: number })?.status;
-        // 모델을 못 쓰는 경우(404·403·400)만 다음 모델로, 그 밖의 오류는 바로 알린다
-        if (status !== 404 && status !== 403 && status !== 400) break;
+        // 충전금·결제 한도 문제는 어느 모델로도 안 되니 바로 알린다
+        if (errCode(e) === "insufficient_quota") break;
+        // 잠깐 몰린 경우(429)는 2초 쉬고 다음 모델로, 모델을 못 쓰는 경우(404·403·400)도 다음 모델로
+        if (status === 429) await new Promise((r) => setTimeout(r, 2000));
+        else if (status !== 404 && status !== 403 && status !== 400) break;
       }
     }
     if (!completion) {
       const status = (lastErr as { status?: number })?.status;
+      const quota = errCode(lastErr) === "insufficient_quota";
       console.error("❌ LABEL OPENAI ERROR:", lastErr);
       return NextResponse.json(
         {
           ok: false,
-          code: `ai-${status ?? "fail"}`,
-          error:
-            status === 401
+          code: quota ? "ai-quota" : status === 429 ? "ai-busy" : `ai-${status ?? "fail"}`,
+          error: quota
+            ? "AI 이용 요금(충전금)이 떨어졌거나 결제 한도에 걸려 라벨을 읽을 수 없습니다."
+            : status === 401
               ? "AI 열쇠가 맞지 않습니다."
               : status === 429
-                ? "AI 사용 한도에 걸렸습니다. 잠시 뒤 다시 해 주세요."
+                ? "지금 AI 요청이 몰려 있습니다. 1분쯤 뒤에 다시 해 주세요."
                 : "AI가 라벨을 읽지 못했습니다. 다시 해 주세요.",
         },
         { status: 502 }
