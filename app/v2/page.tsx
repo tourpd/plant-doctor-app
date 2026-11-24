@@ -9,18 +9,22 @@ import Link from "next/link";
 import {
   blobToDataUrl,
   deleteEntry,
+  getCurrentField,
   getEntries,
   getFields,
   newId,
   putEntry,
   saveFields,
+  setCurrentField,
   shrinkImage,
 } from "./lib/store";
-import type { Entry, EntryKind, Field } from "./lib/store";
+import type { Entry, FarmType, Field } from "./lib/store";
 import {
   addDays,
   buildAlerts,
   calendarUrl,
+  doseLines,
+  matchUseIndex,
   niceDate,
   recommendFor,
   rotationWarning,
@@ -33,6 +37,10 @@ type LabelUse = {
   crop: string;
   target: string | null;
   dilution: string | null;
+  dilution_x: number | null;
+  per_10a_amount: number | null;
+  per_10a_unit: string | null;
+  spray_l_per_10a: number | null;
   timing: string | null;
   max_count: number | null;
   phi_days: number | null;
@@ -53,12 +61,23 @@ type Label = {
     caution: string | null;
   } | null;
   uses: LabelUse[];
+  my_use_index: number | null;
 };
 
-type Mode = "home" | "label" | "record" | "saved" | "photo" | "diary";
+type Mode = "home" | "field" | "label" | "record" | "saved" | "growth" | "work" | "diary";
 
 const GREEN = "#16a34a";
 const NOT_ON_LABEL = "라벨에서 확인되지 않음";
+const FARM_TYPES: FarmType[] = ["노지", "시설하우스", "스마트팜"];
+const WORKS = [
+  "🌱 심기·씨뿌리기",
+  "💧 물주기",
+  "🧺 거름·비료 주기",
+  "🌿 풀 뽑기",
+  "✂️ 가지치기·순지르기",
+  "🍎 수확",
+  "📝 그 밖의 일",
+];
 
 const S: Record<string, CSSProperties> = {
   wrap: {
@@ -120,42 +139,88 @@ const S: Record<string, CSSProperties> = {
     boxSizing: "border-box",
   },
   label: { display: "block", fontWeight: 800, marginTop: 14 },
+  linkBtn: {
+    width: "100%",
+    minHeight: 54,
+    borderRadius: 14,
+    border: "2px solid #cbd5e1",
+    background: "#fff",
+    color: "#111",
+    fontSize: 18,
+    fontWeight: 800,
+    marginTop: 10,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    textDecoration: "none",
+    boxSizing: "border-box",
+  },
 };
+
+function chip(on: boolean): CSSProperties {
+  return {
+    padding: "10px 14px",
+    minHeight: 48,
+    borderRadius: 999,
+    border: `2px solid ${on ? GREEN : "#cbd5e1"}`,
+    background: on ? "#dcfce7" : "#fff",
+    color: "#111",
+    fontSize: 17,
+    fontWeight: 800,
+  };
+}
+
+function fieldLine(f: Field): string {
+  return [f.crop, f.area ? `${f.area}평` : "", f.type ?? ""].filter(Boolean).join(" · ");
+}
 
 export default function PhotoDoctorV2() {
   const [mode, setMode] = useState<Mode>("home");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [fields, setFields] = useState<Field[]>([]);
+  const [curName, setCurName] = useState("");
+  const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // 밭 등록
+  const [fName, setFName] = useState("");
+  const [fCrop, setFCrop] = useState("");
+  const [fArea, setFArea] = useState("");
+  const [fType, setFType] = useState<FarmType>("노지");
 
   // 라벨 읽기
   const [label, setLabel] = useState<Label | null>(null);
   const [labelFiles, setLabelFiles] = useState<File[]>([]);
-  const [thumb, setThumb] = useState<string>("");
+  const [thumb, setThumb] = useState("");
 
   // 기록 입력
-  const [fieldName, setFieldName] = useState("");
-  const [crop, setCrop] = useState("");
   const [useIdx, setUseIdx] = useState(-1);
+  const [tankL, setTankL] = useState("20");
   const [amount, setAmount] = useState("");
   const [nextDays, setNextDays] = useState(0);
   const [memo, setMemo] = useState("");
-  const [photoKind, setPhotoKind] = useState<EntryKind>("growth");
+  const [work, setWork] = useState("");
   const [saved, setSaved] = useState<Entry | null>(null);
   const [diaryField, setDiaryField] = useState("");
 
   const labelInput = useRef<HTMLInputElement>(null);
   const moreInput = useRef<HTMLInputElement>(null);
-  const photoInput = useRef<HTMLInputElement>(null);
+  const growthInput = useRef<HTMLInputElement>(null);
+  const workInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setFields(getFields());
+    const fs = getFields();
+    setFields(fs);
+    const cur = getCurrentField();
+    setCurName(fs.some((f) => f.name === cur) ? cur : fs[0]?.name ?? "");
+    setReady(true);
     getEntries()
       .then(setEntries)
       .catch(() => setError("이 휴대폰에서는 일지를 저장할 수 없습니다."));
   }, []);
 
+  const cur = fields.find((f) => f.name === curName) ?? null;
   const alerts = useMemo(() => buildAlerts(entries), [entries]);
 
   function resetForm() {
@@ -163,9 +228,11 @@ export default function PhotoDoctorV2() {
     setLabelFiles([]);
     setThumb("");
     setUseIdx(-1);
+    setTankL("20");
     setAmount("");
     setNextDays(0);
     setMemo("");
+    setWork("");
     setError("");
   }
 
@@ -175,22 +242,42 @@ export default function PhotoDoctorV2() {
     setMode("home");
   }
 
-  function pickField(name: string) {
-    setFieldName(name);
-    const f = fields.find((x) => x.name === name);
-    if (f) setCrop(f.crop);
+  function chooseField(name: string) {
+    setCurName(name);
+    setCurrentField(name);
   }
 
-  function rememberField(name: string, cropName: string) {
-    const rest = fields.filter((f) => f.name !== name);
-    const next = [{ name, crop: cropName }, ...rest];
+  function openFieldForm(f?: Field) {
+    setFName(f?.name ?? "");
+    setFCrop(f?.crop ?? "");
+    setFArea(f?.area ? String(f.area) : "");
+    setFType(f?.type ?? "노지");
+    setError("");
+    setMode("field");
+  }
+
+  function saveField() {
+    const name = fName.trim();
+    const crop = fCrop.trim();
+    if (!name || !crop) {
+      setError("밭 이름과 작물은 꼭 적어 주세요.");
+      return;
+    }
+    const area = Number(fArea);
+    const next: Field[] = [
+      { name, crop, area: area > 0 ? area : undefined, type: fType },
+      ...fields.filter((f) => f.name !== name),
+    ];
     setFields(next);
     saveFields(next);
+    chooseField(name);
+    setError("");
+    setMode("home");
   }
 
   // ───── 라벨 사진 → AI 읽기 ─────
   async function readLabel(files: File[]) {
-    if (files.length === 0) return;
+    if (files.length === 0 || !cur) return;
     setLoading(true);
     setError("");
     try {
@@ -198,12 +285,21 @@ export default function PhotoDoctorV2() {
       for (const f of files.slice(0, 2)) {
         form.append("images", await shrinkImage(f, 1400, 0.8), "label.jpg");
       }
+      form.append("crop", cur.crop);
+      form.append("farmType", cur.type ?? "");
       setThumb(await blobToDataUrl(await shrinkImage(files[0], 480, 0.6)));
       const res = await fetch("/api/v2/label", { method: "POST", body: form });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "라벨을 읽지 못했습니다.");
-      const l = data.label as Label;
-      setLabel({ ...l, uses: Array.isArray(l.uses) ? l.uses : [] });
+      const raw = data.label as Label;
+      const uses = Array.isArray(raw.uses) ? raw.uses : [];
+      const ai = raw.my_use_index;
+      const idx =
+        typeof ai === "number" && ai >= 0 && ai < uses.length
+          ? ai
+          : matchUseIndex(uses, cur.crop);
+      setLabel({ ...raw, uses });
+      setUseIdx(idx >= 0 ? idx : uses.length > 0 ? -2 : -1);
       setLabelFiles(files.slice(0, 2));
       setMode("label");
     } catch (e) {
@@ -232,36 +328,28 @@ export default function PhotoDoctorV2() {
     window.speechSynthesis.speak(u);
   }
 
-  // ───── 기록 저장 ─────
+  // ───── 내 밭 기준 계산 ─────
   const chosenUse = label && useIdx >= 0 ? label.uses[useIdx] : null;
   const offLabel = !!label && label.uses.length > 0 && useIdx === -2;
+  const dose = chosenUse ? doseLines(chosenUse, cur?.area, Number(tankL) || 0) : [];
   const rotation =
-    label && fieldName
-      ? rotationWarning(entries, fieldName, label.category, label.moa_code)
-      : null;
+    label && cur ? rotationWarning(entries, cur.name, label.category, label.moa_code) : null;
   const usedCount =
-    label?.product_name && fieldName
-      ? sprayCount(entries, fieldName, label.product_name)
-      : 0;
+    label?.product_name && cur ? sprayCount(entries, cur.name, label.product_name) : 0;
   const overCount =
-    !!chosenUse &&
-    typeof chosenUse.max_count === "number" &&
-    usedCount >= chosenUse.max_count;
+    !!chosenUse && typeof chosenUse.max_count === "number" && usedCount >= chosenUse.max_count;
+  const indoor = cur?.type === "시설하우스" || cur?.type === "스마트팜";
 
   async function saveSpray() {
-    if (!label) return;
-    if (!fieldName.trim()) {
-      setError("어느 밭인지 적어 주세요.");
-      return;
-    }
+    if (!label || !cur) return;
     const date = today();
     const entry: Entry = {
       id: newId(),
       createdAt: Date.now(),
       date,
       kind: "spray",
-      field: fieldName.trim(),
-      crop: (chosenUse?.crop || crop).trim(),
+      field: cur.name,
+      crop: cur.crop,
       thumb,
       memo: memo.trim() || undefined,
       product: label.product_name ?? "이름 모름",
@@ -275,36 +363,37 @@ export default function PhotoDoctorV2() {
       nextDate: nextDays > 0 ? addDays(date, nextDays) : null,
     };
     await putEntry(entry);
-    rememberField(entry.field, entry.crop);
     setEntries(await getEntries());
     setSaved(entry);
     setMode("saved");
   }
 
-  async function savePhoto(file: File) {
-    if (!fieldName.trim()) {
-      setError("어느 밭인지 먼저 적어 주세요.");
+  async function savePhoto(kind: "growth" | "work", file: File | null) {
+    if (!cur) return;
+    if (kind === "work" && !work) {
+      setError("어떤 일을 했는지 골라 주세요.");
       return;
     }
     setLoading(true);
+    setError("");
     try {
       const entry: Entry = {
         id: newId(),
         createdAt: Date.now(),
         date: today(),
-        kind: photoKind,
-        field: fieldName.trim(),
-        crop: crop.trim(),
-        thumb: await blobToDataUrl(await shrinkImage(file, 640, 0.65)),
+        kind,
+        field: cur.name,
+        crop: cur.crop,
+        thumb: file ? await blobToDataUrl(await shrinkImage(file, 640, 0.65)) : undefined,
         memo: memo.trim() || undefined,
+        work: kind === "work" ? work : undefined,
       };
       await putEntry(entry);
-      rememberField(entry.field, entry.crop);
       setEntries(await getEntries());
       setSaved(entry);
       setMode("saved");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "사진을 저장하지 못했습니다.");
+      setError(e instanceof Error ? e.message : "저장하지 못했습니다.");
     } finally {
       setLoading(false);
     }
@@ -324,62 +413,25 @@ export default function PhotoDoctorV2() {
     URL.revokeObjectURL(a.href);
   }
 
-  // ───── 화면 조각 ─────
-  const fieldPicker = (
-    <>
-      <label style={S.label}>어느 밭인가요?</label>
-      {fields.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
-          {fields.map((f) => (
-            <button
-              key={f.name}
-              onClick={() => pickField(f.name)}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 999,
-                border: `2px solid ${fieldName === f.name ? GREEN : "#cbd5e1"}`,
-                background: fieldName === f.name ? "#dcfce7" : "#fff",
-                fontSize: 17,
-                fontWeight: 800,
-              }}
-            >
-              {f.name}
-            </button>
-          ))}
-        </div>
-      )}
-      <input
-        style={S.input}
-        placeholder="밭 이름 (예: 집 앞 고추밭)"
-        value={fieldName}
-        onChange={(e) => setFieldName(e.target.value)}
-      />
-      <input
-        style={S.input}
-        placeholder="작물 (예: 고추)"
-        value={crop}
-        onChange={(e) => setCrop(e.target.value)}
-      />
-    </>
-  );
-
-  const header = (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      {mode !== "home" && (
-        <button
-          onClick={goHome}
-          style={{ ...S.subBtn, width: "auto", minHeight: 44, marginTop: 0, padding: "0 14px" }}
-        >
-          ← 처음
-        </button>
-      )}
-      <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>🌱 포토닥터 농사일지</h1>
+  const curCard = cur && (
+    <div style={{ ...S.card, background: "#ecfdf5" }}>
+      <b>{cur.name}</b> · {fieldLine(cur)}
     </div>
   );
 
   return (
     <main style={S.wrap}>
-      {header}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {mode !== "home" && fields.length > 0 && (
+          <button
+            onClick={goHome}
+            style={{ ...S.subBtn, width: "auto", minHeight: 44, marginTop: 0, padding: "0 14px" }}
+          >
+            ← 처음
+          </button>
+        )}
+        <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>🌱 포토닥터 농사일지</h1>
+      </div>
 
       {error && <div style={S.warn}>{error}</div>}
       {loading && (
@@ -388,9 +440,79 @@ export default function PhotoDoctorV2() {
         </div>
       )}
 
-      {/* ───────── 처음 화면 ───────── */}
-      {mode === "home" && (
+      {/* ───────── 밭 등록 (처음 한 번) ───────── */}
+      {ready && (mode === "field" || fields.length === 0) && (
         <>
+          <div style={S.card}>
+            <b>먼저 내 밭을 알려 주세요</b>
+            <div style={{ fontSize: 16, color: "#555" }}>
+              작물과 평수를 알아야 라벨에서 내 작물 사용법을 찾고, 내 밭에 필요한 약량을 계산해 드립니다. 한 번만 적으면 됩니다.
+            </div>
+          </div>
+          <label style={S.label}>밭 이름</label>
+          <input
+            style={S.input}
+            placeholder="예: 집 앞 고추밭"
+            value={fName}
+            onChange={(e) => setFName(e.target.value)}
+          />
+          <label style={S.label}>작물</label>
+          <input
+            style={S.input}
+            placeholder="예: 고추"
+            value={fCrop}
+            onChange={(e) => setFCrop(e.target.value)}
+          />
+          <label style={S.label}>면적 (평)</label>
+          <input
+            style={S.input}
+            inputMode="numeric"
+            placeholder="예: 300"
+            value={fArea}
+            onChange={(e) => setFArea(e.target.value.replace(/[^0-9.]/g, ""))}
+          />
+          <label style={S.label}>재배 방식</label>
+          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+            {FARM_TYPES.map((t) => (
+              <button key={t} onClick={() => setFType(t)} style={{ ...chip(fType === t), flex: 1 }}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <button style={S.bigBtn} onClick={saveField}>
+            💾 밭 저장
+          </button>
+        </>
+      )}
+
+      {/* ───────── 처음 화면 ───────── */}
+      {ready && mode === "home" && fields.length > 0 && (
+        <>
+          <div style={S.card}>
+            <div style={{ fontWeight: 900 }}>지금 기록할 밭</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+              {fields.map((f) => (
+                <button key={f.name} onClick={() => chooseField(f.name)} style={chip(curName === f.name)}>
+                  {f.name}
+                </button>
+              ))}
+              <button onClick={() => openFieldForm()} style={chip(false)}>
+                ＋ 밭 추가
+              </button>
+            </div>
+            {cur && (
+              <div style={{ marginTop: 8, color: "#333" }}>
+                {fieldLine(cur)}{" "}
+                <button
+                  onClick={() => openFieldForm(cur)}
+                  style={{ border: "none", background: "none", color: GREEN, fontSize: 16, fontWeight: 800 }}
+                >
+                  고치기
+                </button>
+              </div>
+            )}
+          </div>
+
           {alerts.map((a, i) => (
             <div key={i} style={a.level === "warn" ? S.warn : S.card}>
               <div style={{ fontWeight: 900 }}>
@@ -412,6 +534,7 @@ export default function PhotoDoctorV2() {
             accept="image/*"
             capture="environment"
             hidden
+            data-testid="label-input"
             onChange={(e) => {
               const f = Array.from(e.target.files ?? []);
               e.target.value = "";
@@ -420,14 +543,13 @@ export default function PhotoDoctorV2() {
           />
           <button style={S.bigBtn} disabled={loading} onClick={() => labelInput.current?.click()}>
             💊 약·영양제 찍기
-            <div style={{ fontSize: 15, fontWeight: 600 }}>라벨을 찍으면 사용법을 알려 드려요</div>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>라벨을 찍으면 내 작물 사용법과 약량을 알려 드려요</div>
           </button>
           <button
             style={S.bigBtn}
             onClick={() => {
               resetForm();
-              setPhotoKind("growth");
-              setMode("photo");
+              setMode("growth");
             }}
           >
             🌿 작물 찍기
@@ -437,29 +559,28 @@ export default function PhotoDoctorV2() {
             style={S.bigBtn}
             onClick={() => {
               resetForm();
-              setPhotoKind("work");
-              setMode("photo");
+              setMode("work");
             }}
           >
-            🚜 작업 찍기
-            <div style={{ fontSize: 15, fontWeight: 600 }}>오늘 한 일을 사진으로 남겨요</div>
+            🚜 오늘 한 일 남기기
+            <div style={{ fontSize: 15, fontWeight: 600 }}>심기·물주기·비료·수확을 버튼으로 기록해요</div>
           </button>
           <button style={S.subBtn} onClick={() => setMode("diary")}>
             📖 내 농사일지 보기 ({entries.length}건)
           </button>
-          <Link href="/" style={{ ...S.subBtn, display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
+          <Link href="/" style={S.linkBtn}>
             🧠 작물이 이상해요 (병해충 진단)
           </Link>
           <p style={{ fontSize: 14, color: "#555", marginTop: 16 }}>
-            일지는 이 휴대폰에만 저장됩니다. 사용법 설명은 라벨에 적힌 내용을 옮긴 것이니,
-            치기 전에 라벨을 한 번 더 확인하세요.
+            일지는 이 휴대폰에만 저장됩니다. 사용법과 약량은 라벨에 적힌 숫자로 계산한 것이니, 치기 전에 라벨을 한 번 더 확인하세요.
           </p>
         </>
       )}
 
       {/* ───────── 라벨 읽은 결과 ───────── */}
-      {mode === "label" && label && (
+      {mode === "label" && label && cur && (
         <>
+          {curCard}
           {!label.readable ? (
             <div style={S.warn}>
               라벨 글씨를 읽지 못했습니다. 밝은 곳에서 제품 이름이 크게 보이게 다시 찍어 주세요.
@@ -492,9 +613,45 @@ export default function PhotoDoctorV2() {
             </div>
           )}
 
+          {chosenUse && (
+            <div style={{ ...S.card, border: `2px solid ${GREEN}` }}>
+              <div style={{ fontWeight: 900 }}>
+                내 {cur.crop} 기준{chosenUse.target ? ` · ${chosenUse.target}` : ""}
+              </div>
+              <div>
+                {[
+                  chosenUse.dilution && `희석 ${chosenUse.dilution}`,
+                  chosenUse.timing,
+                  typeof chosenUse.max_count === "number" && `${chosenUse.max_count}회 이내`,
+                  typeof chosenUse.phi_days === "number" && `수확 ${chosenUse.phi_days}일 전까지`,
+                ]
+                  .filter(Boolean)
+                  .join(" / ") || NOT_ON_LABEL}
+              </div>
+              {dose.map((d) => (
+                <div key={d} style={{ fontSize: 21, fontWeight: 900, marginTop: 6 }}>
+                  🧮 {d}
+                </div>
+              ))}
+              {dose.length === 0 && (
+                <div style={{ color: "#888" }}>라벨에 희석배수·사용량 숫자가 없어 약량은 계산하지 않았습니다.</div>
+              )}
+            </div>
+          )}
+          {offLabel && (
+            <div style={S.warn}>
+              이 라벨의 사용 표에 {cur.crop}이(가) 없습니다. 등록되지 않은 작물에는 쓰면 안 되니, 치기 전에 농약사에 꼭 확인하세요.
+            </div>
+          )}
+          {label.readable && indoor && (
+            <div style={S.card}>
+              🏠 {cur.type}에서는 마스크와 보호구를 쓰고, 뿌린 뒤 충분히 환기한 다음 들어가세요.
+            </div>
+          )}
+
           {label.uses.length > 0 && (
             <div style={S.card}>
-              <div style={{ fontWeight: 900 }}>라벨의 사용 표</div>
+              <div style={{ fontWeight: 900 }}>라벨의 사용 표 (전체)</div>
               {label.uses.map((u, i) => (
                 <div key={i} style={{ borderTop: i ? "1px solid #e5e7eb" : "none", padding: "8px 0", fontSize: 17 }}>
                   <b>{u.crop}</b>
@@ -543,12 +700,11 @@ export default function PhotoDoctorV2() {
       )}
 
       {/* ───────── 살포 기록 입력 ───────── */}
-      {mode === "record" && label && (
+      {mode === "record" && label && cur && (
         <>
           <div style={S.card}>
-            <b>{label.product_name}</b> · 오늘({niceDate(today())}) 사용
+            <b>{label.product_name}</b> · 오늘({niceDate(today())}) · {cur.name}
           </div>
-          {fieldPicker}
 
           {label.uses.length > 0 && (
             <>
@@ -577,10 +733,34 @@ export default function PhotoDoctorV2() {
             </div>
           )}
 
-          <label style={S.label}>얼마나 쳤나요?</label>
+          {chosenUse?.dilution_x ? (
+            <>
+              <label style={S.label}>물 몇 리터에 타나요?</label>
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                {["20", "100", "500"].map((v) => (
+                  <button key={v} onClick={() => setTankL(v)} style={{ ...chip(tankL === v), flex: 1 }}>
+                    {v}L
+                  </button>
+                ))}
+              </div>
+              <input
+                style={S.input}
+                inputMode="numeric"
+                value={tankL}
+                onChange={(e) => setTankL(e.target.value.replace(/[^0-9.]/g, ""))}
+              />
+              {dose.map((d) => (
+                <div key={d} style={{ fontSize: 20, fontWeight: 900, marginTop: 6 }}>
+                  🧮 {d}
+                </div>
+              ))}
+            </>
+          ) : null}
+
+          <label style={S.label}>실제로 얼마나 쳤나요?</label>
           <input
             style={S.input}
-            placeholder="예: 20리터 한 통"
+            placeholder="예: 20리터 3통"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
@@ -588,19 +768,7 @@ export default function PhotoDoctorV2() {
           <label style={S.label}>다음 방제 알림</label>
           <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
             {[0, 7, 10, 14].map((d) => (
-              <button
-                key={d}
-                onClick={() => setNextDays(d)}
-                style={{
-                  flex: 1,
-                  minHeight: 50,
-                  borderRadius: 12,
-                  border: `2px solid ${nextDays === d ? GREEN : "#cbd5e1"}`,
-                  background: nextDays === d ? "#dcfce7" : "#fff",
-                  fontSize: 17,
-                  fontWeight: 800,
-                }}
-              >
+              <button key={d} onClick={() => setNextDays(d)} style={{ ...chip(nextDays === d), flex: 1 }}>
                 {d === 0 ? "안 함" : `${d}일 뒤`}
               </button>
             ))}
@@ -615,19 +783,57 @@ export default function PhotoDoctorV2() {
         </>
       )}
 
-      {/* ───────── 작물·작업 사진 ───────── */}
-      {mode === "photo" && (
+      {/* ───────── 작물 사진 ───────── */}
+      {mode === "growth" && cur && (
         <>
-          {fieldPicker}
+          {curCard}
           <label style={S.label}>메모 (자판의 마이크로 말해도 됩니다)</label>
           <input
             style={S.input}
-            placeholder={photoKind === "growth" ? "예: 꽃이 피기 시작" : "예: 비닐 씌우기"}
+            placeholder="예: 꽃이 피기 시작"
             value={memo}
             onChange={(e) => setMemo(e.target.value)}
           />
           <input
-            ref={photoInput}
+            ref={growthInput}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            data-testid="growth-input"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) void savePhoto("growth", f);
+            }}
+          />
+          <button style={S.bigBtn} disabled={loading} onClick={() => growthInput.current?.click()}>
+            📷 작물 사진 찍기
+          </button>
+        </>
+      )}
+
+      {/* ───────── 오늘 한 일 ───────── */}
+      {mode === "work" && cur && (
+        <>
+          {curCard}
+          <label style={S.label}>오늘 무슨 일을 했나요?</label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+            {WORKS.map((w) => (
+              <button key={w} onClick={() => setWork(w)} style={chip(work === w)}>
+                {w}
+              </button>
+            ))}
+          </div>
+          <label style={S.label}>메모 (자판의 마이크로 말해도 됩니다)</label>
+          <input
+            style={S.input}
+            placeholder="예: 복합비료 2포"
+            value={memo}
+            onChange={(e) => setMemo(e.target.value)}
+          />
+          <input
+            ref={workInput}
             type="file"
             accept="image/*"
             capture="environment"
@@ -635,22 +841,24 @@ export default function PhotoDoctorV2() {
             onChange={(e) => {
               const f = e.target.files?.[0];
               e.target.value = "";
-              if (f) void savePhoto(f);
+              if (f) void savePhoto("work", f);
             }}
           />
           <button
             style={S.bigBtn}
             disabled={loading}
             onClick={() => {
-              if (!fieldName.trim()) {
-                setError("어느 밭인지 먼저 적어 주세요.");
+              if (!work) {
+                setError("어떤 일을 했는지 골라 주세요.");
                 return;
               }
-              setError("");
-              photoInput.current?.click();
+              workInput.current?.click();
             }}
           >
-            📷 {photoKind === "growth" ? "작물 사진 찍기" : "작업 사진 찍기"}
+            📷 사진 찍고 저장
+          </button>
+          <button style={S.subBtn} disabled={loading} onClick={() => void savePhoto("work", null)}>
+            사진 없이 저장
           </button>
         </>
       )}
@@ -663,6 +871,7 @@ export default function PhotoDoctorV2() {
             <div>
               {niceDate(saved.date)} · {saved.field}
               {saved.product ? ` · ${saved.product}` : ""}
+              {saved.work ? ` · ${saved.work}` : ""}
             </div>
           </div>
 
@@ -687,7 +896,7 @@ export default function PhotoDoctorV2() {
                 )}
                 target="_blank"
                 rel="noreferrer"
-                style={{ ...S.subBtn, display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}
+                style={S.linkBtn}
               >
                 휴대폰 달력에 알람 넣기
               </a>
@@ -700,12 +909,7 @@ export default function PhotoDoctorV2() {
                 <span style={{ fontSize: 13, background: "#e5e7eb", borderRadius: 6, padding: "2px 6px" }}>광고</span>
                 <div style={{ fontSize: 20, fontWeight: 900, marginTop: 4 }}>{p.name}</div>
                 <div style={{ color: "#555" }}>{p.note} · 한국농수산TV 협찬 제품</div>
-                <a
-                  href={p.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ ...S.subBtn, display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}
-                >
+                <a href={p.url} target="_blank" rel="noreferrer" style={S.linkBtn}>
                   제품 보기·구매 상담
                 </a>
               </div>
@@ -763,7 +967,7 @@ export default function PhotoDoctorV2() {
                       {e.target ? ` · ${e.target}` : ""}
                     </div>
                   ) : (
-                    <div>{e.kind === "growth" ? "🌿 작물 사진" : "🚜 작업"}</div>
+                    <div>{e.kind === "growth" ? "🌿 작물 사진" : e.work ?? "🚜 작업"}</div>
                   )}
                   {e.memo && <div style={{ color: "#555" }}>{e.memo}</div>}
                   <button
