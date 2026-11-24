@@ -1,6 +1,8 @@
 // app/api/v2/weather/route.ts
-// 밭 위치의 3일 예보를 가져온다. 날씨 공급처를 바꿀 때는 이 파일만 고치면 된다.
+// 밭 위치의 3일 예보를 가져온다.
+// 1순위: 기상청 단기예보(포토닥터가 이미 쓰는 DATA_GO_KR_KEY). 실패하면 Open-Meteo 로 대신한다.
 import { NextResponse } from "next/server";
+import { getKmaForecast } from "../../../v2/lib/kma";
 
 export const runtime = "nodejs";
 
@@ -12,6 +14,9 @@ export async function GET(req: Request) {
   if (!(lat >= 32 && lat <= 39.5 && lon >= 124 && lon <= 132)) {
     return NextResponse.json({ ok: false, error: "위치가 올바르지 않습니다." }, { status: 400 });
   }
+  const kma = await getKmaForecast(lat, lon);
+  if (kma) return NextResponse.json({ ok: true, source: "기상청 단기예보", days: kma });
+
   const q = new URLSearchParams({
     latitude: lat.toFixed(2),
     longitude: lon.toFixed(2),
@@ -37,7 +42,7 @@ export async function GET(req: Request) {
       tMax: Number(d.temperature_2m_max?.[i] ?? 0),
       tMin: Number(d.temperature_2m_min?.[i] ?? 0),
     }));
-    return NextResponse.json({ ok: true, days });
+    return NextResponse.json({ ok: true, source: "Open-Meteo(예비)", days });
   } catch (e) {
     console.error("❌ WEATHER API ERROR:", e);
     return NextResponse.json({ ok: false, error: "날씨를 가져오지 못했습니다." }, { status: 502 });

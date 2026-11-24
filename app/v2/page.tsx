@@ -265,6 +265,7 @@ export default function PhotoDoctorV2() {
   const [regionQ, setRegionQ] = useState("");
   const [locating, setLocating] = useState(false);
   const [weather, setWeather] = useState<WeatherDay[]>([]);
+  const [weatherSource, setWeatherSource] = useState("");
 
   // 라벨 읽기
   const [label, setLabel] = useState<Label | null>(null);
@@ -306,7 +307,9 @@ export default function PhotoDoctorV2() {
     fetch(`/api/v2/weather?lat=${wLat}&lon=${wLon}`)
       .then((r) => r.json())
       .then((d) => {
-        if (alive) setWeather(d?.ok && Array.isArray(d.days) ? (d.days as WeatherDay[]) : []);
+        if (!alive) return;
+        setWeather(d?.ok && Array.isArray(d.days) ? (d.days as WeatherDay[]) : []);
+        setWeatherSource(typeof d?.source === "string" ? d.source : "");
       })
       .catch(() => {
         if (alive) setWeather([]);
@@ -492,6 +495,7 @@ export default function PhotoDoctorV2() {
           {a}
         </div>
       ))}
+      {weatherSource && <div style={{ fontSize: 13, color: "#777", marginTop: 6 }}>자료: {weatherSource}</div>}
     </div>
   );
 
