@@ -4,7 +4,7 @@
 // 기존 진단 화면(/)은 건드리지 않고 /v2 에 따로 둔다.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { ChangeEvent, CSSProperties, RefObject } from "react";
 import Link from "next/link";
 import {
   blobToDataUrl,
@@ -18,7 +18,9 @@ import {
   setCurrentField,
   shrinkImage,
 } from "./lib/store";
-import type { Entry, FarmType, Field } from "./lib/store";
+import type { Entry, FarmMode, FarmType, Field } from "./lib/store";
+import { nearestRegion, searchRegions } from "./lib/regions";
+import type { Region } from "./lib/regions";
 import {
   addDays,
   buildAlerts,
@@ -29,9 +31,13 @@ import {
   recommendFor,
   rotationWarning,
   sprayCount,
+  tankPresets,
   toCsv,
   today,
+  weatherAdvice,
+  worksFor,
 } from "./lib/logic";
+import type { WeatherDay } from "./lib/logic";
 
 type LabelUse = {
   crop: string;
@@ -69,14 +75,10 @@ type Mode = "home" | "field" | "label" | "record" | "saved" | "growth" | "work" 
 const GREEN = "#16a34a";
 const NOT_ON_LABEL = "라벨에서 확인되지 않음";
 const FARM_TYPES: FarmType[] = ["노지", "시설하우스", "스마트팜"];
-const WORKS = [
-  "🌱 심기·씨뿌리기",
-  "💧 물주기",
-  "🧺 거름·비료 주기",
-  "🌿 풀 뽑기",
-  "✂️ 가지치기·순지르기",
-  "🍎 수확",
-  "📝 그 밖의 일",
+const FARM_MODES: { mode: FarmMode; icon: string; desc: string }[] = [
+  { mode: "농사", icon: "🚜", desc: "논밭·과수원·하우스" },
+  { mode: "텃밭", icon: "🥬", desc: "주말농장·마당 텃밭" },
+  { mode: "베란다", icon: "🪴", desc: "화분·반려식물" },
 ];
 
 const S: Record<string, CSSProperties> = {
@@ -170,8 +172,77 @@ function chip(on: boolean): CSSProperties {
   };
 }
 
+function modeOf(f: Field | null | undefined): FarmMode {
+  return f?.mode ?? "농사";
+}
+
 function fieldLine(f: Field): string {
-  return [f.crop, f.area ? `${f.area}평` : "", f.type ?? ""].filter(Boolean).join(" · ");
+  const mode = modeOf(f);
+  return [
+    mode === "농사" ? "" : mode,
+    f.crop,
+    f.area ? `${f.area}평` : "",
+    f.pots ? `화분 ${f.pots}개` : "",
+    mode === "농사" ? f.type ?? "" : "",
+    f.region ?? "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** 사진 찍기 + 앨범에서 고르기 두 버튼 */
+function PhotoButtons(props: {
+  onFile: (f: File) => void;
+  testid: string;
+  disabled?: boolean;
+  guard?: () => boolean;
+}) {
+  const cam = useRef<HTMLInputElement>(null);
+  const album = useRef<HTMLInputElement>(null);
+  const onChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (f) props.onFile(f);
+  };
+  const open = (ref: RefObject<HTMLInputElement | null>) => {
+    if (props.guard && !props.guard()) return;
+    ref.current?.click();
+  };
+  return (
+    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+      <input
+        ref={cam}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        data-testid={`${props.testid}-camera`}
+        onChange={onChange}
+      />
+      <input
+        ref={album}
+        type="file"
+        accept="image/*"
+        hidden
+        data-testid={`${props.testid}-album`}
+        onChange={onChange}
+      />
+      <button
+        style={{ ...S.bigBtn, marginTop: 0, flex: 1, minHeight: 62, fontSize: 19 }}
+        disabled={props.disabled}
+        onClick={() => open(cam)}
+      >
+        📷 사진 찍기
+      </button>
+      <button
+        style={{ ...S.subBtn, marginTop: 0, flex: 1, minHeight: 62 }}
+        disabled={props.disabled}
+        onClick={() => open(album)}
+      >
+        🖼 앨범에서 고르기
+      </button>
+    </div>
+  );
 }
 
 export default function PhotoDoctorV2() {
@@ -188,6 +259,12 @@ export default function PhotoDoctorV2() {
   const [fCrop, setFCrop] = useState("");
   const [fArea, setFArea] = useState("");
   const [fType, setFType] = useState<FarmType>("노지");
+  const [fMode, setFMode] = useState<FarmMode>("농사");
+  const [fPots, setFPots] = useState("");
+  const [fRegion, setFRegion] = useState<Region | null>(null);
+  const [regionQ, setRegionQ] = useState("");
+  const [locating, setLocating] = useState(false);
+  const [weather, setWeather] = useState<WeatherDay[]>([]);
 
   // 라벨 읽기
   const [label, setLabel] = useState<Label | null>(null);
@@ -204,10 +281,6 @@ export default function PhotoDoctorV2() {
   const [saved, setSaved] = useState<Entry | null>(null);
   const [diaryField, setDiaryField] = useState("");
 
-  const labelInput = useRef<HTMLInputElement>(null);
-  const moreInput = useRef<HTMLInputElement>(null);
-  const growthInput = useRef<HTMLInputElement>(null);
-  const workInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const fs = getFields();
@@ -221,14 +294,36 @@ export default function PhotoDoctorV2() {
   }, []);
 
   const cur = fields.find((f) => f.name === curName) ?? null;
+  const curMode = modeOf(cur);
   const alerts = useMemo(() => buildAlerts(entries), [entries]);
+
+  // 밭 위치의 날씨 (베란다는 실내라 보지 않는다)
+  const wLat = curMode === "베란다" ? undefined : cur?.lat;
+  const wLon = curMode === "베란다" ? undefined : cur?.lon;
+  useEffect(() => {
+    if (wLat === undefined || wLon === undefined) return;
+    let alive = true;
+    fetch(`/api/v2/weather?lat=${wLat}&lon=${wLon}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (alive) setWeather(d?.ok && Array.isArray(d.days) ? (d.days as WeatherDay[]) : []);
+      })
+      .catch(() => {
+        if (alive) setWeather([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [wLat, wLon]);
+  const hasWeather = wLat !== undefined && wLon !== undefined && weather.length > 0;
+  const advice = cur && hasWeather ? weatherAdvice(weather, cur) : [];
 
   function resetForm() {
     setLabel(null);
     setLabelFiles([]);
     setThumb("");
     setUseIdx(-1);
-    setTankL("20");
+    setTankL(tankPresets(curMode)[0]);
     setAmount("");
     setNextDays(0);
     setMemo("");
@@ -252,8 +347,37 @@ export default function PhotoDoctorV2() {
     setFCrop(f?.crop ?? "");
     setFArea(f?.area ? String(f.area) : "");
     setFType(f?.type ?? "노지");
+    setFMode(modeOf(f));
+    setFPots(f?.pots ? String(f.pots) : "");
+    setFRegion(
+      f?.region && f.lat !== undefined && f.lon !== undefined
+        ? { name: f.region, lat: f.lat, lon: f.lon }
+        : null
+    );
+    setRegionQ("");
     setError("");
     setMode("field");
+  }
+
+  function locateMe() {
+    if (!navigator.geolocation) {
+      setError("이 휴대폰에서는 위치를 쓸 수 없습니다. 지역 이름을 적어 주세요.");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const near = nearestRegion(pos.coords.latitude, pos.coords.longitude);
+        setFRegion({ name: near.name, lat: pos.coords.latitude, lon: pos.coords.longitude });
+        setRegionQ("");
+        setLocating(false);
+      },
+      () => {
+        setError("위치를 가져오지 못했습니다. 지역 이름을 적어 주세요.");
+        setLocating(false);
+      },
+      { timeout: 10000 }
+    );
   }
 
   function saveField() {
@@ -263,9 +387,24 @@ export default function PhotoDoctorV2() {
       setError("밭 이름과 작물은 꼭 적어 주세요.");
       return;
     }
+    if (fMode !== "베란다" && !fRegion) {
+      setError("지역을 골라 주세요. 지역에 따라 날씨와 방제 시기가 달라집니다.");
+      return;
+    }
     const area = Number(fArea);
+    const pots = Number(fPots);
     const next: Field[] = [
-      { name, crop, area: area > 0 ? area : undefined, type: fType },
+      {
+        name,
+        crop,
+        mode: fMode,
+        area: fMode !== "베란다" && area > 0 ? area : undefined,
+        pots: fMode === "베란다" && pots > 0 ? pots : undefined,
+        type: fMode === "농사" ? fType : undefined,
+        region: fRegion?.name,
+        lat: fRegion?.lat,
+        lon: fRegion?.lon,
+      },
       ...fields.filter((f) => f.name !== name),
     ];
     setFields(next);
@@ -300,6 +439,7 @@ export default function PhotoDoctorV2() {
           : matchUseIndex(uses, cur.crop);
       setLabel({ ...raw, uses });
       setUseIdx(idx >= 0 ? idx : uses.length > 0 ? -2 : -1);
+      setTankL(tankPresets(modeOf(cur))[0]);
       setLabelFiles(files.slice(0, 2));
       setMode("label");
     } catch (e) {
@@ -338,7 +478,22 @@ export default function PhotoDoctorV2() {
     label?.product_name && cur ? sprayCount(entries, cur.name, label.product_name) : 0;
   const overCount =
     !!chosenUse && typeof chosenUse.max_count === "number" && usedCount >= chosenUse.max_count;
-  const indoor = cur?.type === "시설하우스" || cur?.type === "스마트팜";
+  const indoorNote =
+    curMode === "베란다"
+      ? "🪴 베란다에서는 창문을 열어 환기하고, 아이와 반려동물이 닿지 않게 하세요."
+      : cur?.type === "시설하우스" || cur?.type === "스마트팜"
+        ? `🏠 ${cur.type}에서는 마스크와 보호구를 쓰고, 뿌린 뒤 충분히 환기한 다음 들어가세요.`
+        : "";
+  const weatherCard = advice.length > 0 && cur && (
+    <div style={S.card}>
+      <div style={{ fontWeight: 900 }}>{cur.region} 날씨와 약 치기</div>
+      {advice.map((a) => (
+        <div key={a} style={{ marginTop: 4 }}>
+          {a}
+        </div>
+      ))}
+    </div>
+  );
 
   async function saveSpray() {
     if (!label || !cur) return;
@@ -444,43 +599,112 @@ export default function PhotoDoctorV2() {
       {ready && (mode === "field" || fields.length === 0) && (
         <>
           <div style={S.card}>
-            <b>먼저 내 밭을 알려 주세요</b>
+            <b>먼저 어디서 키우는지 알려 주세요</b>
             <div style={{ fontSize: 16, color: "#555" }}>
-              작물과 평수를 알아야 라벨에서 내 작물 사용법을 찾고, 내 밭에 필요한 약량을 계산해 드립니다. 한 번만 적으면 됩니다.
+              작물·넓이·지역을 알아야 라벨에서 내 작물 사용법을 찾고, 필요한 약량과 날씨에 맞는 때를 알려 드립니다. 한 번만 적으면 됩니다.
             </div>
           </div>
-          <label style={S.label}>밭 이름</label>
-          <input
-            style={S.input}
-            placeholder="예: 집 앞 고추밭"
-            value={fName}
-            onChange={(e) => setFName(e.target.value)}
-          />
-          <label style={S.label}>작물</label>
-          <input
-            style={S.input}
-            placeholder="예: 고추"
-            value={fCrop}
-            onChange={(e) => setFCrop(e.target.value)}
-          />
-          <label style={S.label}>면적 (평)</label>
-          <input
-            style={S.input}
-            inputMode="numeric"
-            placeholder="예: 300"
-            value={fArea}
-            onChange={(e) => setFArea(e.target.value.replace(/[^0-9.]/g, ""))}
-          />
-          <label style={S.label}>재배 방식</label>
-          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-            {FARM_TYPES.map((t) => (
-              <button key={t} onClick={() => setFType(t)} style={{ ...chip(fType === t), flex: 1 }}>
-                {t}
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            {FARM_MODES.map((m) => (
+              <button
+                key={m.mode}
+                onClick={() => setFMode(m.mode)}
+                style={{ ...chip(fMode === m.mode), flex: 1, borderRadius: 16, padding: "10px 4px" }}
+              >
+                <div style={{ fontSize: 26 }}>{m.icon}</div>
+                {m.mode}
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#555" }}>{m.desc}</div>
               </button>
             ))}
           </div>
+          <label style={S.label}>{fMode === "베란다" ? "이름" : "밭 이름"}</label>
+          <input
+            style={S.input}
+            data-testid="f-name"
+            placeholder={fMode === "베란다" ? "예: 거실 베란다" : fMode === "텃밭" ? "예: 주말농장" : "예: 집 앞 고추밭"}
+            value={fName}
+            onChange={(e) => setFName(e.target.value)}
+          />
+          <label style={S.label}>{fMode === "베란다" ? "식물·작물" : "작물"}</label>
+          <input
+            style={S.input}
+            data-testid="f-crop"
+            placeholder={fMode === "베란다" ? "예: 방울토마토, 몬스테라" : "예: 고추"}
+            value={fCrop}
+            onChange={(e) => setFCrop(e.target.value)}
+          />
+          {fMode === "베란다" ? (
+            <>
+              <label style={S.label}>화분 개수</label>
+              <input
+                style={S.input}
+                data-testid="f-pots"
+                inputMode="numeric"
+                placeholder="예: 5"
+                value={fPots}
+                onChange={(e) => setFPots(e.target.value.replace(/[^0-9]/g, ""))}
+              />
+            </>
+          ) : (
+            <>
+              <label style={S.label}>면적 (평)</label>
+              <input
+                style={S.input}
+                data-testid="f-area"
+                inputMode="numeric"
+                placeholder={fMode === "텃밭" ? "예: 5" : "예: 300"}
+                value={fArea}
+                onChange={(e) => setFArea(e.target.value.replace(/[^0-9.]/g, ""))}
+              />
+            </>
+          )}
+          {fMode === "농사" && (
+            <>
+              <label style={S.label}>재배 방식</label>
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                {FARM_TYPES.map((t) => (
+                  <button key={t} onClick={() => setFType(t)} style={{ ...chip(fType === t), flex: 1 }}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          {fMode !== "베란다" && (
+            <>
+              <label style={S.label}>지역 (시·군)</label>
+              {fRegion ? (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                  <span style={chip(true)}>📍 {fRegion.name}</span>
+                  <button onClick={() => setFRegion(null)} style={chip(false)}>
+                    바꾸기
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <input
+                    style={S.input}
+                    data-testid="f-region"
+                    placeholder="예: 홍성, 경주, 제주"
+                    value={regionQ}
+                    onChange={(e) => setRegionQ(e.target.value)}
+                  />
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                    {searchRegions(regionQ).map((r) => (
+                      <button key={r.name} onClick={() => setFRegion(r)} style={chip(false)}>
+                        {r.name}
+                      </button>
+                    ))}
+                    <button onClick={locateMe} disabled={locating} style={chip(false)}>
+                      {locating ? "위치 찾는 중…" : "📍 지금 있는 곳으로"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
+          )}
           <button style={S.bigBtn} onClick={saveField}>
-            💾 밭 저장
+            💾 저장
           </button>
         </>
       )}
@@ -489,7 +713,7 @@ export default function PhotoDoctorV2() {
       {ready && mode === "home" && fields.length > 0 && (
         <>
           <div style={S.card}>
-            <div style={{ fontWeight: 900 }}>지금 기록할 밭</div>
+            <div style={{ fontWeight: 900 }}>지금 기록할 곳</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
               {fields.map((f) => (
                 <button key={f.name} onClick={() => chooseField(f.name)} style={chip(curName === f.name)}>
@@ -497,7 +721,7 @@ export default function PhotoDoctorV2() {
                 </button>
               ))}
               <button onClick={() => openFieldForm()} style={chip(false)}>
-                ＋ 밭 추가
+                ＋ 추가
               </button>
             </div>
             {cur && (
@@ -528,23 +752,15 @@ export default function PhotoDoctorV2() {
             </div>
           ))}
 
-          <input
-            ref={labelInput}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            hidden
-            data-testid="label-input"
-            onChange={(e) => {
-              const f = Array.from(e.target.files ?? []);
-              e.target.value = "";
-              void readLabel(f);
-            }}
-          />
-          <button style={S.bigBtn} disabled={loading} onClick={() => labelInput.current?.click()}>
-            💊 약·영양제 찍기
-            <div style={{ fontSize: 15, fontWeight: 600 }}>라벨을 찍으면 내 작물 사용법과 약량을 알려 드려요</div>
-          </button>
+          {weatherCard}
+
+          <div style={{ ...S.card, border: `2px solid ${GREEN}` }}>
+            <div style={{ fontSize: 22, fontWeight: 900 }}>💊 약·영양제 라벨</div>
+            <div style={{ fontSize: 15, color: "#555" }}>
+              라벨 사진으로 내 작물 사용법과 약량을 알려 드려요
+            </div>
+            <PhotoButtons testid="label" disabled={loading} onFile={(f) => void readLabel([f])} />
+          </div>
           <button
             style={S.bigBtn}
             onClick={() => {
@@ -552,7 +768,7 @@ export default function PhotoDoctorV2() {
               setMode("growth");
             }}
           >
-            🌿 작물 찍기
+            🌿 작물 사진 남기기
             <div style={{ fontSize: 15, fontWeight: 600 }}>자라는 모습을 날짜별로 남겨요</div>
           </button>
           <button
@@ -563,10 +779,12 @@ export default function PhotoDoctorV2() {
             }}
           >
             🚜 오늘 한 일 남기기
-            <div style={{ fontSize: 15, fontWeight: 600 }}>심기·물주기·비료·수확을 버튼으로 기록해요</div>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>
+              {curMode === "베란다" ? "물주기·분갈이·영양제를 버튼으로 기록해요" : "심기·물주기·비료·수확을 버튼으로 기록해요"}
+            </div>
           </button>
           <button style={S.subBtn} onClick={() => setMode("diary")}>
-            📖 내 농사일지 보기 ({entries.length}건)
+            📖 내 일지 보기 ({entries.length}건)
           </button>
           <Link href="/" style={S.linkBtn}>
             🧠 작물이 이상해요 (병해충 진단)
@@ -643,11 +861,8 @@ export default function PhotoDoctorV2() {
               이 라벨의 사용 표에 {cur.crop}이(가) 없습니다. 등록되지 않은 작물에는 쓰면 안 되니, 치기 전에 농약사에 꼭 확인하세요.
             </div>
           )}
-          {label.readable && indoor && (
-            <div style={S.card}>
-              🏠 {cur.type}에서는 마스크와 보호구를 쓰고, 뿌린 뒤 충분히 환기한 다음 들어가세요.
-            </div>
-          )}
+          {label.readable && indoorNote && <div style={S.card}>{indoorNote}</div>}
+          {label.readable && weatherCard}
 
           {label.uses.length > 0 && (
             <div style={S.card}>
@@ -672,23 +887,14 @@ export default function PhotoDoctorV2() {
           )}
 
           {(label.need_more || label.uses.length === 0) && labelFiles.length < 2 && (
-            <>
-              <input
-                ref={moreInput}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = "";
-                  if (f) void readLabel([labelFiles[0], f]);
-                }}
+            <div style={S.card}>
+              <b>{label.need_more ?? "사용법 표가 있는 면을 한 장 더 넣어 주세요"}</b>
+              <PhotoButtons
+                testid="more"
+                disabled={loading}
+                onFile={(f) => void readLabel([labelFiles[0], f])}
               />
-              <button style={S.subBtn} disabled={loading} onClick={() => moreInput.current?.click()}>
-                📷 {label.need_more ?? "사용법 표가 있는 면을 한 장 더 찍기"}
-              </button>
-            </>
+            </div>
           )}
 
           {label.readable && (
@@ -737,7 +943,7 @@ export default function PhotoDoctorV2() {
             <>
               <label style={S.label}>물 몇 리터에 타나요?</label>
               <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                {["20", "100", "500"].map((v) => (
+                {tankPresets(curMode).map((v) => (
                   <button key={v} onClick={() => setTankL(v)} style={{ ...chip(tankL === v), flex: 1 }}>
                     {v}L
                   </button>
@@ -760,7 +966,7 @@ export default function PhotoDoctorV2() {
           <label style={S.label}>실제로 얼마나 쳤나요?</label>
           <input
             style={S.input}
-            placeholder="예: 20리터 3통"
+            placeholder={curMode === "농사" ? "예: 20리터 3통" : "예: 분무기 1통"}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
@@ -794,22 +1000,7 @@ export default function PhotoDoctorV2() {
             value={memo}
             onChange={(e) => setMemo(e.target.value)}
           />
-          <input
-            ref={growthInput}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            hidden
-            data-testid="growth-input"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (f) void savePhoto("growth", f);
-            }}
-          />
-          <button style={S.bigBtn} disabled={loading} onClick={() => growthInput.current?.click()}>
-            📷 작물 사진 찍기
-          </button>
+          <PhotoButtons testid="growth" disabled={loading} onFile={(f) => void savePhoto("growth", f)} />
         </>
       )}
 
@@ -819,7 +1010,7 @@ export default function PhotoDoctorV2() {
           {curCard}
           <label style={S.label}>오늘 무슨 일을 했나요?</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
-            {WORKS.map((w) => (
+            {worksFor(curMode).map((w) => (
               <button key={w} onClick={() => setWork(w)} style={chip(work === w)}>
                 {w}
               </button>
@@ -832,31 +1023,18 @@ export default function PhotoDoctorV2() {
             value={memo}
             onChange={(e) => setMemo(e.target.value)}
           />
-          <input
-            ref={workInput}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (f) void savePhoto("work", f);
-            }}
-          />
-          <button
-            style={S.bigBtn}
+          <PhotoButtons
+            testid="work"
             disabled={loading}
-            onClick={() => {
+            guard={() => {
               if (!work) {
                 setError("어떤 일을 했는지 골라 주세요.");
-                return;
+                return false;
               }
-              workInput.current?.click();
+              return true;
             }}
-          >
-            📷 사진 찍고 저장
-          </button>
+            onFile={(f) => void savePhoto("work", f)}
+          />
           <button style={S.subBtn} disabled={loading} onClick={() => void savePhoto("work", null)}>
             사진 없이 저장
           </button>
@@ -904,7 +1082,7 @@ export default function PhotoDoctorV2() {
           )}
 
           {saved.kind === "spray" &&
-            recommendFor(saved.category).map((p) => (
+            recommendFor(saved.category, curMode).map((p) => (
               <div key={p.name} style={S.card}>
                 <span style={{ fontSize: 13, background: "#e5e7eb", borderRadius: 6, padding: "2px 6px" }}>광고</span>
                 <div style={{ fontSize: 20, fontWeight: 900, marginTop: 4 }}>{p.name}</div>
