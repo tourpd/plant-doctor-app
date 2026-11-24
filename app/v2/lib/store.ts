@@ -167,3 +167,12 @@ export function blobToDataUrl(blob: Blob): Promise<string> {
     r.readAsDataURL(blob);
   });
 }
+
+/** 일지에 넣을 작은 사진. 휴대폰이 못 여는 형식(HEIC 등)이면 사진 없이 기록만 남긴다 */
+export async function safeThumb(file: Blob, maxSide: number, quality: number): Promise<string | undefined> {
+  try {
+    return await blobToDataUrl(await shrinkImage(file as File, maxSide, quality));
+  } catch {
+    return undefined;
+  }
+}

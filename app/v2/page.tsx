@@ -7,17 +7,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, RefObject } from "react";
 import Link from "next/link";
 import {
-  blobToDataUrl,
   deleteEntry,
   getCurrentField,
   getEntries,
   getFields,
   newId,
   putEntry,
+  safeThumb,
   saveFields,
   setCurrentField,
-  shrinkImage,
 } from "./lib/store";
+import { prepareImageForUpload, SERVER_LIMIT } from "../../lib/clientImage";
 import type { Entry, FarmMode, FarmType, Field } from "./lib/store";
 import { nearestRegion, searchRegions } from "./lib/regions";
 import type { Region } from "./lib/regions";
@@ -423,16 +423,28 @@ export default function PhotoDoctorV2() {
     setLoading(true);
     setError("");
     try {
+      // 갤럭시 고화소·HEIC 사진도 받도록 운영 진단과 같은 방식으로 정리해서 보낸다
       const form = new FormData();
+      let total = 0;
+      let firstPrepared: File | null = null;
       for (const f of files.slice(0, 2)) {
-        form.append("images", await shrinkImage(f, 1400, 0.8), "label.jpg");
+        const prepared = await prepareImageForUpload(f);
+        total += prepared.file.size;
+        if (!firstPrepared) firstPrepared = prepared.file;
+        form.append("images", prepared.file, prepared.file.name || "label.jpg");
+      }
+      if (total > SERVER_LIMIT) {
+        throw new Error("사진 용량이 너무 큽니다. '사진 찍기'로 다시 찍어 주세요.");
       }
       form.append("crop", cur.crop);
       form.append("farmType", cur.type ?? "");
-      setThumb(await blobToDataUrl(await shrinkImage(files[0], 480, 0.6)));
+      setThumb((await safeThumb(firstPrepared ?? files[0], 480, 0.6)) ?? "");
       const res = await fetch("/api/v2/label", { method: "POST", body: form });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "라벨을 읽지 못했습니다.");
+      const data = await res.json().catch(() => null);
+      if (!data) throw new Error(`서버가 응답하지 못했습니다. 잠시 뒤 다시 해 주세요. (코드: HTTP ${res.status})`);
+      if (!data.ok) {
+        throw new Error(`${data.error || "라벨을 읽지 못했습니다."}${data.code ? ` (코드: ${data.code})` : ""}`);
+      }
       const raw = data.label as Label;
       const uses = Array.isArray(raw.uses) ? raw.uses : [];
       const ai = raw.my_use_index;
@@ -543,7 +555,7 @@ export default function PhotoDoctorV2() {
         kind,
         field: cur.name,
         crop: cur.crop,
-        thumb: file ? await blobToDataUrl(await shrinkImage(file, 640, 0.65)) : undefined,
+        thumb: file ? await safeThumb(file, 640, 0.65) : undefined,
         memo: memo.trim() || undefined,
         work: kind === "work" ? work : undefined,
       };
@@ -592,10 +604,48 @@ export default function PhotoDoctorV2() {
         <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>🌱 포토닥터 농사일지</h1>
       </div>
 
-      {error && <div style={S.warn}>{error}</div>}
+      {/* 알림은 화면 어디를 보고 있어도 보이게 고정해서 띄운다 */}
+      {error && (
+        <div
+          role="alert"
+          style={{
+            ...S.warn,
+            position: "fixed",
+            top: 8,
+            left: 8,
+            right: 8,
+            zIndex: 60,
+            marginTop: 0,
+            boxShadow: "0 6px 24px rgba(0,0,0,0.25)",
+          }}
+        >
+          ⚠️ {error}
+          <button
+            onClick={() => setError("")}
+            style={{ ...S.subBtn, minHeight: 44, marginTop: 8 }}
+          >
+            확인
+          </button>
+        </div>
+      )}
       {loading && (
-        <div style={{ ...S.card, textAlign: "center", fontWeight: 800 }}>
-          읽는 중입니다… 잠시만 기다려 주세요
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 50,
+            background: "rgba(0,0,0,0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <div style={{ ...S.card, textAlign: "center", fontSize: 22, fontWeight: 900, marginTop: 0 }}>
+            ⏳ 사진을 읽고 있습니다
+            <div style={{ fontSize: 16, fontWeight: 600, marginTop: 6 }}>10~30초쯤 걸립니다. 화면을 닫지 마세요.</div>
+          </div>
         </div>
       )}
 

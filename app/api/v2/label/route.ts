@@ -2,13 +2,18 @@
 // 농약·영양제·비료 라벨 사진을 읽어 "라벨에 적힌 내용만" 쉽게 정리한다.
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
+import { normalizeImage } from "../../../../lib/serverImage";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 // 라벨 읽기는 가벼운 모델로 충분하다. Vercel 환경변수 LABEL_MODEL로 바꿀 수 있다.
-const MODEL = process.env.LABEL_MODEL || "gpt-4.1-mini";
+// 앞의 모델이 이 계정에서 안 되면 다음 모델로 넘어간다 (마지막은 운영 진단이 쓰는 모델).
+const MODELS = Array.from(
+  new Set([process.env.LABEL_MODEL || "gpt-4.1-mini", "gpt-4o-mini", "gpt-4o"])
+);
 const MAX_IMAGES = 2;
-const MAX_BYTES = 2 * 1024 * 1024;
+const MAX_BYTES = 4 * 1024 * 1024;
 
 const SYSTEM_PROMPT = `
 너는 대한민국 농약·비료·영양제 포장 라벨을 읽어 주는 도우미다.
@@ -86,53 +91,91 @@ export async function POST(req: Request) {
 
     if (images.length === 0) {
       return NextResponse.json(
-        { ok: false, error: "사진이 없습니다." },
+        { ok: false, code: "no-image", error: "사진이 서버에 도착하지 않았습니다. 다시 해 주세요." },
         { status: 400 }
       );
     }
     if (images.some((f) => f.size > MAX_BYTES)) {
       return NextResponse.json(
-        { ok: false, error: "사진이 너무 큽니다." },
+        { ok: false, code: "too-big", error: "사진 용량이 너무 큽니다. '사진 찍기'로 다시 찍어 주세요." },
         { status: 413 }
       );
     }
 
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json(
+        { ok: false, code: "no-key", error: "이 주소에는 AI 열쇠가 등록돼 있지 않아 라벨을 읽을 수 없습니다." },
+        { status: 500 }
+      );
+    }
+
+    // 갤럭시 HEIC·세로 사진도 AI가 읽을 수 있는 JPEG로 맞춘다 (운영 진단과 같은 처리)
     const parts = await Promise.all(
-      images.map(async (f) => ({
-        type: "image_url" as const,
-        image_url: {
-          url: `data:image/jpeg;base64,${Buffer.from(await f.arrayBuffer()).toString("base64")}`,
-        },
-      }))
+      images.map(async (f) => {
+        const n = await normalizeImage(Buffer.from(await f.arrayBuffer()), f.type, f.name);
+        return {
+          type: "image_url" as const,
+          image_url: { url: `data:${n.mime};base64,${n.buffer.toString("base64")}`, detail: "high" as const },
+        };
+      })
     );
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-    const completion = await openai.chat.completions.create({
-      model: MODEL,
-      temperature: 0,
-      max_tokens: 2500,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: [
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    let completion: OpenAI.Chat.Completions.ChatCompletion | null = null;
+    let lastErr: unknown = null;
+    for (const model of MODELS) {
+      try {
+        completion = await openai.chat.completions.create({
+          model,
+          temperature: 0,
+          max_tokens: 2500,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
             {
-              type: "text",
-              text: `이 라벨 사진을 읽고 JSON 형식으로만 답하십시오. 라벨에 없는 내용은 null입니다.${farmer}`,
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `이 라벨 사진을 읽고 JSON 형식으로만 답하십시오. 라벨에 없는 내용은 null입니다.${farmer}`,
+                },
+                ...parts,
+              ],
             },
-            ...parts,
           ],
+        });
+        break;
+      } catch (e) {
+        lastErr = e;
+        const status = (e as { status?: number })?.status;
+        // 모델을 못 쓰는 경우(404·403·400)만 다음 모델로, 그 밖의 오류는 바로 알린다
+        if (status !== 404 && status !== 403 && status !== 400) break;
+      }
+    }
+    if (!completion) {
+      const status = (lastErr as { status?: number })?.status;
+      console.error("❌ LABEL OPENAI ERROR:", lastErr);
+      return NextResponse.json(
+        {
+          ok: false,
+          code: `ai-${status ?? "fail"}`,
+          error:
+            status === 401
+              ? "AI 열쇠가 맞지 않습니다."
+              : status === 429
+                ? "AI 사용 한도에 걸렸습니다. 잠시 뒤 다시 해 주세요."
+                : "AI가 라벨을 읽지 못했습니다. 다시 해 주세요.",
         },
-      ],
-    });
+        { status: 502 }
+      );
+    }
 
     const parsed = safeJsonParse(completion.choices[0].message.content ?? "");
     return NextResponse.json({ ok: true, label: parsed });
   } catch (e: unknown) {
     console.error("❌ LABEL API ERROR:", e);
     return NextResponse.json(
-      { ok: false, error: "라벨을 읽는 중 오류가 났습니다. 다시 찍어 주세요." },
+      { ok: false, code: "server", error: "라벨을 읽는 중 오류가 났습니다. 다시 찍어 주세요." },
       { status: 500 }
     );
   }
