@@ -39,13 +39,22 @@ const SYSTEM_PROMPT = `
     {
       "crop": string,
       "target": string | null,
-      "dilution": string | null,
+      "dilution": string | null,        // 라벨 표기 그대로 (예: "1,000배")
+      "dilution_x": number | null,      // 희석배수 숫자만 (1,000배면 1000). 없으면 null
+      "per_10a_amount": number | null,  // "10a당 사용량"이 약제 양으로 적혀 있으면 그 숫자 (예: 3kg이면 3)
+      "per_10a_unit": string | null,    // 그 단위 (kg, g, ml, L)
+      "spray_l_per_10a": number | null, // "10a당 살포량(물량)"이 리터로 적혀 있으면 그 숫자
       "timing": string | null,
       "max_count": number | null, // 사용 횟수 한도
       "phi_days": number | null   // 수확 며칠 전까지 사용
     }
-  ]
+  ],
+  "my_use_index": number | null   // 농민의 작물과 같은 작물이 uses에 있으면 그 줄 번호(0부터). 없으면 null
 }
+
+[농민 정보가 주어지면]
+- summary는 농민의 작물에 해당하는 줄을 기준으로 쓴다. 그 작물이 라벨에 없으면 summary.where에 "라벨에 (작물명)은 없습니다"라고 분명히 쓴다.
+- 농민 정보에 맞춰 숫자를 바꾸거나 계산하지 않는다. 숫자는 라벨 그대로다.
 `;
 
 function safeJsonParse(raw: string): unknown {
@@ -66,6 +75,14 @@ export async function POST(req: Request) {
       .getAll("images")
       .filter((v): v is File => v instanceof File)
       .slice(0, MAX_IMAGES);
+
+    const clean = (v: FormDataEntryValue | null) =>
+      typeof v === "string" ? v.replace(/[\r\n]/g, " ").trim().slice(0, 30) : "";
+    const crop = clean(formData.get("crop"));
+    const farmType = clean(formData.get("farmType"));
+    const farmer = crop
+      ? `\n[농민 정보] 작물: ${crop}${farmType ? `, 재배 방식: ${farmType}` : ""}`
+      : "";
 
     if (images.length === 0) {
       return NextResponse.json(
@@ -93,7 +110,7 @@ export async function POST(req: Request) {
     const completion = await openai.chat.completions.create({
       model: MODEL,
       temperature: 0,
-      max_tokens: 1500,
+      max_tokens: 2500,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
@@ -102,7 +119,7 @@ export async function POST(req: Request) {
           content: [
             {
               type: "text",
-              text: "이 라벨 사진을 읽고 JSON 형식으로만 답하십시오. 라벨에 없는 내용은 null입니다.",
+              text: `이 라벨 사진을 읽고 JSON 형식으로만 답하십시오. 라벨에 없는 내용은 null입니다.${farmer}`,
             },
             ...parts,
           ],

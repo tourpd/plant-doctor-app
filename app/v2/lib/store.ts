@@ -12,6 +12,7 @@ export type Entry = {
   crop: string;
   thumb?: string; // 작은 사진(dataURL)
   memo?: string;
+  work?: string; // 작업 종류 (심기·물주기·수확 등)
   // 아래는 약·영양제 기록(spray)일 때만
   product?: string;
   category?: string; // 살충제 | 살균제 | 제초제 | 영양제 | 비료 | 기타
@@ -24,11 +25,36 @@ export type Entry = {
   nextDate?: string | null; // 다음 방제 예정일
 };
 
-export type Field = { name: string; crop: string };
+export type FarmType = "노지" | "시설하우스" | "스마트팜";
+
+// 밭 정보: 작물·면적·재배 방식을 알아야 라벨에서 내 작물 줄을 찾고 약량을 계산할 수 있다
+export type Field = {
+  name: string;
+  crop: string;
+  area?: number; // 평
+  type?: FarmType;
+};
 
 const DB_NAME = "photodoctor2";
 const STORE = "entries";
 const FIELDS_KEY = "pd2_fields";
+const CUR_KEY = "pd2_cur_field";
+
+export function getCurrentField(): string {
+  try {
+    return localStorage.getItem(CUR_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setCurrentField(name: string): void {
+  try {
+    localStorage.setItem(CUR_KEY, name);
+  } catch {
+    /* 무시 */
+  }
+}
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {

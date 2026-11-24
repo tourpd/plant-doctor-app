@@ -160,6 +160,62 @@ export function buildAlerts(entries: Entry[]): Alert[] {
   return alerts;
 }
 
+// ───────── 약량 계산 (라벨 숫자 × 내 밭 면적) ─────────
+// AI가 아니라 산수로만 계산한다. 라벨에 숫자가 없으면 계산하지 않는다.
+export const PYEONG_PER_10A = 302.5; // 10a = 1,000㎡ = 약 302.5평
+
+export type DoseInput = {
+  dilution_x: number | null; // 희석배수 (1000배면 1000)
+  per_10a_amount: number | null; // 10a당 사용량 숫자
+  per_10a_unit: string | null; // 그 단위 (kg, g, ml, L 등)
+  spray_l_per_10a: number | null; // 10a당 살포 물량(L)
+};
+
+function fmt(n: number): string {
+  if (n >= 100) return String(Math.round(n));
+  return String(Math.round(n * 10) / 10);
+}
+
+function fmtMl(ml: number): string {
+  return ml >= 1000 ? `${fmt(ml / 1000)}L(kg)` : `${fmt(ml)}ml(g)`;
+}
+
+export function doseLines(
+  use: DoseInput,
+  areaPyeong: number | undefined,
+  tankL: number
+): string[] {
+  const lines: string[] = [];
+  const x = use.dilution_x;
+  if (x && x > 0 && tankL > 0) {
+    lines.push(`물 ${fmt(tankL)}L에 약 ${fmtMl((tankL * 1000) / x)} (${fmt(x)}배)`);
+  }
+  if (areaPyeong && areaPyeong > 0) {
+    const ratio = areaPyeong / PYEONG_PER_10A;
+    if (use.spray_l_per_10a && use.spray_l_per_10a > 0) {
+      const water = use.spray_l_per_10a * ratio;
+      const chem = x && x > 0 ? `, 약은 모두 ${fmtMl((water * 1000) / x)}` : "";
+      lines.push(`${fmt(areaPyeong)}평 전체: 물 약 ${fmt(water)}L${chem}`);
+    }
+    if (use.per_10a_amount && use.per_10a_amount > 0) {
+      lines.push(
+        `${fmt(areaPyeong)}평 전체: 약 ${fmt(use.per_10a_amount * ratio)}${use.per_10a_unit ?? ""} (라벨: 10a당 ${fmt(use.per_10a_amount)}${use.per_10a_unit ?? ""})`
+      );
+    }
+  }
+  return lines;
+}
+
+/** 라벨의 작물 이름이 내 작물과 같은 줄 찾기 (AI가 못 골랐을 때 대비) */
+export function matchUseIndex(uses: { crop: string }[], crop: string): number {
+  const c = crop.replace(/\s+/g, "");
+  if (!c) return -1;
+  return uses.findIndex((u) => {
+    const uc = (u.crop ?? "").replace(/\s+/g, "");
+    return uc.length > 0 && (uc.includes(c) || c.includes(uc));
+  });
+}
+
 // ───────── 도프 제품 추천표 ─────────
 // 문구는 효능을 단정하지 않는다. 도프 공식 표현을 받으면 note만 바꾸면 된다.
 export type Product = { name: string; note: string; url: string };
@@ -194,6 +250,12 @@ export function recommendFor(category: string | undefined): Product[] {
 /** 영농일지 CSV (인증·출하 서류용) */
 export function toCsv(entries: Entry[]): string {
   const head = ["날짜", "밭", "작물", "종류", "제품", "계통", "대상", "사용량", "메모"];
+  const kindOf = (e: Entry) =>
+    e.kind === "spray"
+      ? e.category ?? kindName.spray
+      : e.kind === "work"
+        ? e.work ?? kindName.work
+        : kindName.growth;
   const kindName = { spray: "약·영양제", growth: "작물 사진", work: "작업" } as const;
   const esc = (v: string | null | undefined) =>
     `"${String(v ?? "").replace(/"/g, '""')}"`;
@@ -204,7 +266,7 @@ export function toCsv(entries: Entry[]): string {
         e.date,
         e.field,
         e.crop,
-        e.kind === "spray" ? e.category ?? kindName.spray : kindName[e.kind],
+        kindOf(e),
         e.product,
         e.moa,
         e.target,
