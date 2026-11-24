@@ -786,7 +786,7 @@ export default function PhotoDoctorV2() {
           <button style={S.subBtn} onClick={() => setMode("diary")}>
             📖 내 일지 보기 ({entries.length}건)
           </button>
-          <Link href="/" style={S.linkBtn}>
+          <Link href="/ai" style={S.linkBtn}>
             🧠 작물이 이상해요 (병해충 진단)
           </Link>
           <p style={{ fontSize: 14, color: "#555", marginTop: 16 }}>
