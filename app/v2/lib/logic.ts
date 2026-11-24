@@ -1,7 +1,7 @@
 // 포토닥터 2 — 알림·교호 살포·추천 규칙
 // AI를 쓰지 않는 고정 규칙이다. 비용 0원, 엉뚱한 안내 방지.
 
-import type { Entry } from "./store";
+import type { Entry, FarmMode, Field } from "./store";
 
 export function today(): string {
   return toDateStr(new Date());
@@ -173,6 +173,7 @@ export type DoseInput = {
 
 function fmt(n: number): string {
   if (n >= 100) return String(Math.round(n));
+  if (n < 1) return String(Math.round(n * 100) / 100); // 베란다처럼 아주 적은 양
   return String(Math.round(n * 10) / 10);
 }
 
@@ -240,11 +241,74 @@ const DOF: Record<string, Product> = {
   },
 };
 
-/** 방금 기록한 약 종류에 맞춰 보여 줄 도프 제품 */
-export function recommendFor(category: string | undefined): Product[] {
-  if (category === "살충제") return [DOF.ssak, DOF.ssakGold];
-  if (category === "살균제") return [DOF.mel];
+/** 방금 기록한 약 종류와 입구(농사·텃밭·베란다)에 맞춰 보여 줄 도프 제품 */
+export function recommendFor(category: string | undefined, mode: FarmMode = "농사"): Product[] {
+  const home = mode !== "농사";
+  const tag = (p: Product): Product =>
+    home ? { ...p, note: "도프 텃밭·가정원예용" } : p;
+  if (category === "살충제") return home ? [tag(DOF.ssakGold)] : [DOF.ssak, DOF.ssakGold];
+  if (category === "살균제") return [tag(DOF.mel)];
   return [];
+}
+
+// ───────── 입구별 설정 ─────────
+export function tankPresets(mode: FarmMode): string[] {
+  if (mode === "베란다") return ["0.5", "1", "2"];
+  if (mode === "텃밭") return ["1", "5", "20"];
+  return ["20", "100", "500"];
+}
+
+export function worksFor(mode: FarmMode): string[] {
+  if (mode === "베란다")
+    return ["💧 물주기", "🪴 분갈이", "🧺 영양제·비료 주기", "✂️ 가지치기·순지르기", "🍅 수확", "📝 그 밖의 일"];
+  return [
+    "🌱 심기·씨뿌리기",
+    "💧 물주기",
+    "🧺 거름·비료 주기",
+    "🌿 풀 뽑기",
+    "✂️ 가지치기·순지르기",
+    "🍎 수확",
+    "📝 그 밖의 일",
+  ];
+}
+
+// ───────── 날씨에 맞춘 살포 안내 ─────────
+export type WeatherDay = {
+  date: string;
+  rainMm: number;
+  rainProb: number;
+  windMs: number;
+  tMax: number;
+  tMin: number;
+};
+
+/** 오늘·내일 예보로 약 치기 좋은지 알려 준다. 고정 규칙이다. */
+export function weatherAdvice(days: WeatherDay[], field: Field): string[] {
+  const mode = field.mode ?? "농사";
+  if (mode === "베란다" || days.length === 0) return [];
+  const covered = field.type === "시설하우스" || field.type === "스마트팜";
+  const out: string[] = [];
+  const names = ["오늘", "내일"];
+  days.slice(0, 2).forEach((d, i) => {
+    const day = names[i];
+    if (!covered && (d.rainProb >= 60 || d.rainMm >= 1)) {
+      out.push(`☔ ${day} 비 예보(확률 ${Math.round(d.rainProb)}%). 약이 씻겨 내려가니 비가 그친 뒤에 치세요.`);
+    }
+    if (!covered && d.windMs >= 5) {
+      out.push(`💨 ${day} 바람이 셉니다(최대 초속 ${Math.round(d.windMs)}m). 약이 날리니 바람이 잔 아침·저녁에 치세요.`);
+    }
+    if (d.tMax >= 30) {
+      out.push(`🌡 ${day} 낮 최고 ${Math.round(d.tMax)}도. 한낮은 피하고 아침·저녁에 치세요.`);
+    }
+  });
+  if (out.length === 0) {
+    out.push(
+      covered
+        ? "🌤 오늘·내일 한낮 더위 걱정은 없습니다."
+        : "🌤 오늘·내일 비와 센 바람 예보가 없어 약 치기 무난합니다."
+    );
+  }
+  return out;
 }
 
 /** 영농일지 CSV (인증·출하 서류용) */

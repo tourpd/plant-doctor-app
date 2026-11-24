@@ -28,11 +28,18 @@ export type Entry = {
 export type FarmType = "노지" | "시설하우스" | "스마트팜";
 
 // 밭 정보: 작물·면적·재배 방식을 알아야 라벨에서 내 작물 줄을 찾고 약량을 계산할 수 있다
+export type FarmMode = "농사" | "텃밭" | "베란다";
+
 export type Field = {
   name: string;
   crop: string;
-  area?: number; // 평
-  type?: FarmType;
+  mode?: FarmMode; // 없으면 농사
+  area?: number; // 평 (농사·텃밭)
+  pots?: number; // 화분 개수 (베란다)
+  type?: FarmType; // 재배 방식 (농사)
+  region?: string; // 시·군
+  lat?: number;
+  lon?: number;
 };
 
 const DB_NAME = "photodoctor2";
