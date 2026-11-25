@@ -79,6 +79,16 @@ function errCode(e: unknown): string {
   return x?.code || x?.error?.code || x?.type || x?.error?.type || "";
 }
 
+/** 원인 파악용 짧은 설명. 조직 번호·열쇠처럼 보이는 글자는 지운다 */
+function errDetail(e: unknown): string {
+  const msg = String((e as { message?: string })?.message ?? "");
+  return msg
+    .replace(/org-[A-Za-z0-9]+/g, "org-***")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "sk-***")
+    .replace(/\s+/g, " ")
+    .slice(0, 220);
+}
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
@@ -134,7 +144,7 @@ export async function POST(req: Request) {
         completion = await openai.chat.completions.create({
           model,
           temperature: 0,
-          max_tokens: 2500,
+          max_tokens: 1800,
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
@@ -169,6 +179,7 @@ export async function POST(req: Request) {
         {
           ok: false,
           code: quota ? "ai-quota" : status === 429 ? "ai-busy" : `ai-${status ?? "fail"}`,
+          detail: errDetail(lastErr),
           error: quota
             ? "AI 이용 요금(충전금)이 떨어졌거나 결제 한도에 걸려 라벨을 읽을 수 없습니다."
             : status === 401

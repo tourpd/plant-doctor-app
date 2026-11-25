@@ -443,7 +443,9 @@ export default function PhotoDoctorV2() {
       const data = await res.json().catch(() => null);
       if (!data) throw new Error(`서버가 응답하지 못했습니다. 잠시 뒤 다시 해 주세요. (코드: HTTP ${res.status})`);
       if (!data.ok) {
-        throw new Error(`${data.error || "라벨을 읽지 못했습니다."}${data.code ? ` (코드: ${data.code})` : ""}`);
+        throw new Error(
+          `${data.error || "라벨을 읽지 못했습니다."}${data.code ? ` (코드: ${data.code})` : ""}${data.detail ? ` [${data.detail}]` : ""}`
+        );
       }
       const raw = data.label as Label;
       const uses = Array.isArray(raw.uses) ? raw.uses : [];
