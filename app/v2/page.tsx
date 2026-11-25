@@ -68,6 +68,7 @@ type Label = {
   } | null;
   uses: LabelUse[];
   my_use_index: number | null;
+  source?: string; // "국립농산물품질관리원 공식 자료" 또는 "라벨 사진"
 };
 
 type Mode = "home" | "field" | "label" | "record" | "saved" | "growth" | "work" | "diary";
@@ -272,6 +273,11 @@ export default function PhotoDoctorV2() {
   const [labelFiles, setLabelFiles] = useState<File[]>([]);
   const [thumb, setThumb] = useState("");
 
+  // 이름으로 찾기 (사진 없이, AI 비용 0원)
+  const [nameQ, setNameQ] = useState("");
+  const [nameHits, setNameHits] = useState<{ name: string; maker: string | null; category: string }[]>([]);
+  const [listening, setListening] = useState(false);
+
   // 기록 입력
   const [useIdx, setUseIdx] = useState(-1);
   const [tankL, setTankL] = useState("20");
@@ -447,23 +453,135 @@ export default function PhotoDoctorV2() {
           `${data.error || "라벨을 읽지 못했습니다."}${data.code ? ` (코드: ${data.code})` : ""}${data.detail ? ` [${data.detail}]` : ""}`
         );
       }
-      const raw = data.label as Label;
-      const uses = Array.isArray(raw.uses) ? raw.uses : [];
-      const ai = raw.my_use_index;
-      const idx =
-        typeof ai === "number" && ai >= 0 && ai < uses.length
-          ? ai
-          : matchUseIndex(uses, cur.crop);
-      setLabel({ ...raw, uses });
-      setUseIdx(idx >= 0 ? idx : uses.length > 0 ? -2 : -1);
-      setTankL(tankPresets(modeOf(cur))[0]);
-      setLabelFiles(files.slice(0, 2));
-      setMode("label");
+      applyLabel(data.label as Label, files.slice(0, 2));
     } catch (e) {
       setError(e instanceof Error ? e.message : "라벨을 읽지 못했습니다.");
     } finally {
       setLoading(false);
     }
+  }
+
+  function applyLabel(raw: Label, files: File[]) {
+    if (!cur) return;
+    const uses = Array.isArray(raw.uses) ? raw.uses : [];
+    const ai = raw.my_use_index;
+    const idx =
+      typeof ai === "number" && ai >= 0 && ai < uses.length
+        ? ai
+        : matchUseIndex(uses, cur.crop);
+    setLabel({ ...raw, uses });
+    setUseIdx(idx >= 0 ? idx : uses.length > 0 ? -2 : -1);
+    setTankL(tankPresets(modeOf(cur))[0]);
+    setLabelFiles(files);
+    setMode("label");
+  }
+
+  // ───── 제품 이름 → 공식 자료 (사진·AI 없이) ─────
+  const recentProducts = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Entry[] = [];
+    for (const e of [...entries].sort((a, b) => b.createdAt - a.createdAt)) {
+      if (e.kind !== "spray" || !e.product || e.product === "이름 모름" || seen.has(e.product)) continue;
+      seen.add(e.product);
+      out.push(e);
+    }
+    return out;
+  }, [entries]);
+
+  useEffect(() => {
+    const q = nameQ.trim();
+    if (q.length < 2) {
+      setNameHits([]);
+      return;
+    }
+    let alive = true;
+    const t = setTimeout(() => {
+      fetch(`/api/v2/product?q=${encodeURIComponent(q)}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (alive) setNameHits(d?.ok && Array.isArray(d.names) ? d.names : []);
+        })
+        .catch(() => {
+          if (alive) setNameHits([]);
+        });
+    }, 300);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [nameQ]);
+
+  async function lookupByName(name: string) {
+    const n = name.trim();
+    if (!n || !cur) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/v2/product?name=${encodeURIComponent(n)}&crop=${encodeURIComponent(cur.crop)}`);
+      const data = await res.json().catch(() => null);
+      setThumb("");
+      if (data?.ok && data.label) {
+        applyLabel(data.label as Label, []);
+        setNameQ("");
+        return;
+      }
+      // 공식 자료에 없으면: 전에 쓴 약은 그때 기록으로 다시 기록할 수 있게 하고, 사용법 표 사진을 받는다
+      const past = recentProducts.find((e) => e.product === n);
+      const need = "공식 자료에서 사용법을 찾지 못했습니다. 라벨 뒷면 사용법 표를 찍어 주세요";
+      applyLabel(
+        {
+          readable: true,
+          need_more: need,
+          product_name: past?.product ?? n,
+          maker: null,
+          category: past?.category ?? "기타",
+          ingredient: past?.ingredient ?? null,
+          moa_code: past?.moa ?? null,
+          summary: null,
+          uses: [],
+          my_use_index: null,
+          source: past ? "내 일지 (지난 기록)" : undefined,
+        },
+        []
+      );
+      setNameQ("");
+    } catch {
+      setError("제품을 찾지 못했습니다. 잠시 뒤 다시 해 주세요.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // 말로 하기: 휴대폰 음성 인식 (AI 비용 없음)
+  function listen() {
+    type SR = {
+      lang: string;
+      interimResults: boolean;
+      maxAlternatives: number;
+      onresult: (ev: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void;
+      onerror: () => void;
+      onend: () => void;
+      start: () => void;
+    };
+    const w = window as unknown as { SpeechRecognition?: new () => SR; webkitSpeechRecognition?: new () => SR };
+    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Ctor) {
+      setError("이 휴대폰에서는 말로 찾기가 안 됩니다. 이름을 글자로 넣어 주세요.");
+      return;
+    }
+    const r = new Ctor();
+    r.lang = "ko-KR";
+    r.interimResults = false;
+    r.maxAlternatives = 1;
+    r.onresult = (ev) => {
+      const said = ev.results[0]?.[0]?.transcript?.replace(/[.。!?]/g, "").trim() ?? "";
+      if (said) setNameQ(said);
+    };
+    r.onerror = () => setError("말을 알아듣지 못했습니다. 다시 해 주세요.");
+    r.onend = () => setListening(false);
+    setError("");
+    setListening(true);
+    r.start();
   }
 
   function speak(l: Label) {
@@ -816,6 +934,56 @@ export default function PhotoDoctorV2() {
               라벨 사진으로 내 작물 사용법과 약량을 알려 드려요
             </div>
             <PhotoButtons testid="label" disabled={loading} onFile={(f) => void readLabel([f])} />
+            <div style={{ fontWeight: 800, marginTop: 14 }}>또는 제품 이름으로 찾기</div>
+            <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+              <input
+                style={{ ...S.input, flex: 1, marginTop: 0 }}
+                value={nameQ}
+                placeholder="두세 글자만 넣어도 돼요"
+                data-testid="name-input"
+                onChange={(e) => setNameQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void lookupByName(nameQ);
+                }}
+              />
+              <button
+                style={{ ...S.subBtn, marginTop: 0, width: 64 }}
+                disabled={loading || listening}
+                aria-label="말로 찾기"
+                data-testid="name-mic"
+                onClick={listen}
+              >
+                {listening ? "👂" : "🎤"}
+              </button>
+            </div>
+            {(() => {
+              const q = nameQ.trim();
+              const recent = recentProducts
+                .filter((e) => !q || (e.product ?? "").includes(q))
+                .slice(0, 5)
+                .map((e) => ({ name: e.product as string, note: `최근 ${niceDate(e.date)}` }));
+              const official = nameHits
+                .filter((h) => !recent.some((r) => r.name === h.name))
+                .map((h) => ({ name: h.name, note: [h.category, h.maker].filter(Boolean).join(" · ") }));
+              const list = [...recent, ...official].slice(0, 8);
+              return list.map((it) => (
+                <button
+                  key={it.name}
+                  style={{ ...S.subBtn, textAlign: "left" }}
+                  disabled={loading}
+                  data-testid="name-hit"
+                  onClick={() => void lookupByName(it.name)}
+                >
+                  {it.name}
+                  {it.note && <span style={{ fontSize: 14, color: "#555", fontWeight: 600 }}> · {it.note}</span>}
+                </button>
+              ));
+            })()}
+            {nameQ.trim().length >= 2 && (
+              <button style={S.subBtn} disabled={loading} onClick={() => void lookupByName(nameQ)}>
+                &quot;{nameQ.trim()}&quot; 찾기
+              </button>
+            )}
           </div>
           <button
             style={S.bigBtn}
@@ -867,6 +1035,11 @@ export default function PhotoDoctorV2() {
               </div>
               {label.moa_code && (
                 <div style={{ marginTop: 6, fontWeight: 800 }}>계통(작용기작 표시기호): {label.moa_code}</div>
+              )}
+              {label.source && (
+                <div style={{ marginTop: 6, fontSize: 14, color: "#555" }} data-testid="label-source">
+                  자료: {label.source}
+                </div>
               )}
               {(
                 [
@@ -948,7 +1121,7 @@ export default function PhotoDoctorV2() {
               <PhotoButtons
                 testid="more"
                 disabled={loading}
-                onFile={(f) => void readLabel([labelFiles[0], f])}
+                onFile={(f) => void readLabel(labelFiles[0] ? [labelFiles[0], f] : [f])}
               />
             </div>
           )}

@@ -3,6 +3,7 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { normalizeImage } from "../../../../lib/serverImage";
+import { catalogConfigured, findProduct, toLabel } from "../../../v2/lib/catalog";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -202,8 +203,30 @@ export async function POST(req: Request) {
       );
     }
 
-    const parsed = safeJsonParse(completion.choices[0].message.content ?? "");
-    return NextResponse.json({ ok: true, label: parsed });
+    const parsed = safeJsonParse(completion.choices[0].message.content ?? "") as {
+      product_name?: string | null;
+      uses?: unknown[];
+      [k: string]: unknown;
+    };
+    // 상표(앞면)만 찍혀 사용법 표가 없으면 국립농산물품질관리원 공식 자료에서 찾아 채운다
+    const noTable = !Array.isArray(parsed?.uses) || parsed.uses.length === 0;
+    if (noTable && parsed?.product_name && catalogConfigured()) {
+      try {
+        const it = await findProduct(parsed.product_name);
+        if (it && it.uses.length > 0) {
+          const official = toLabel(it, crop);
+          // 주의사항은 앞면에도 적혀 있는 경우가 많아 사진에서 읽은 것을 살린다
+          const photoCaution = (parsed.summary as { caution?: string | null } | undefined)?.caution ?? null;
+          return NextResponse.json({
+            ok: true,
+            label: { ...official, summary: { ...official.summary, caution: photoCaution } },
+          });
+        }
+      } catch (e) {
+        console.error("⚠️ LABEL CATALOG LOOKUP:", e); // 공식 자료가 안 되면 사진 결과만 돌려준다
+      }
+    }
+    return NextResponse.json({ ok: true, label: { ...parsed, source: "라벨 사진" } });
   } catch (e: unknown) {
     console.error("❌ LABEL API ERROR:", e);
     return NextResponse.json(
