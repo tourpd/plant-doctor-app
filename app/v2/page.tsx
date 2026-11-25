@@ -955,7 +955,7 @@ export default function PhotoDoctorV2() {
 
           {label.readable && (
             <button style={S.bigBtn} onClick={() => setMode("record")}>
-              ✅ 오늘 이 약 쳤어요 (기록하기)
+              ✅ {label.category === "비료" || label.category === "영양제" ? "오늘 이것 줬어요" : "오늘 이 약 쳤어요"} (기록하기)
             </button>
           )}
         </>
