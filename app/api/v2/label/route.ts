@@ -79,6 +79,11 @@ function errCode(e: unknown): string {
   return x?.code || x?.error?.code || x?.type || x?.error?.type || "";
 }
 
+/** OpenAI 계정에 설정한 지출 한도에 걸린 경우 (기다려도 풀리지 않는다) */
+function isSpendLimit(e: unknown): boolean {
+  return /spend limit|hard limit|billing/i.test(String((e as { message?: string })?.message ?? ""));
+}
+
 /** 원인 파악용 짧은 설명. 조직 번호·열쇠처럼 보이는 글자는 지운다 */
 function errDetail(e: unknown): string {
   const msg = String((e as { message?: string })?.message ?? "");
@@ -165,7 +170,7 @@ export async function POST(req: Request) {
         lastErr = e;
         const status = (e as { status?: number })?.status;
         // 충전금·결제 한도 문제는 어느 모델로도 안 되니 바로 알린다
-        if (errCode(e) === "insufficient_quota") break;
+        if (errCode(e) === "insufficient_quota" || isSpendLimit(e)) break;
         // 잠깐 몰린 경우(429)는 2초 쉬고 다음 모델로, 모델을 못 쓰는 경우(404·403·400)도 다음 모델로
         if (status === 429) await new Promise((r) => setTimeout(r, 2000));
         else if (status !== 404 && status !== 403 && status !== 400) break;
@@ -173,14 +178,17 @@ export async function POST(req: Request) {
     }
     if (!completion) {
       const status = (lastErr as { status?: number })?.status;
-      const quota = errCode(lastErr) === "insufficient_quota";
+      const budget = isSpendLimit(lastErr);
+      const quota = !budget && errCode(lastErr) === "insufficient_quota";
       console.error("❌ LABEL OPENAI ERROR:", lastErr);
       return NextResponse.json(
         {
           ok: false,
-          code: quota ? "ai-quota" : status === 429 ? "ai-busy" : `ai-${status ?? "fail"}`,
+          code: budget ? "ai-budget" : quota ? "ai-quota" : status === 429 ? "ai-busy" : `ai-${status ?? "fail"}`,
           detail: errDetail(lastErr),
-          error: quota
+          error: budget
+            ? "AI(OpenAI) 계정에 정해 둔 월 사용 한도를 다 써서 라벨을 읽을 수 없습니다. 한도를 올리거나 다음 달까지 기다려야 합니다."
+            : quota
             ? "AI 이용 요금(충전금)이 떨어졌거나 결제 한도에 걸려 라벨을 읽을 수 없습니다."
             : status === 401
               ? "AI 열쇠가 맞지 않습니다."
