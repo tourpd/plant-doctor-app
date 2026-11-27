@@ -68,12 +68,26 @@ type Label = {
   } | null;
   uses: LabelUse[];
   my_use_index: number | null;
+  source?: "official"; // 공식 등록 자료에서 찾은 제품
+  variant?: string; // 같은 상표의 여러 제형을 구분하는 말
 };
 
-type Mode = "home" | "field" | "label" | "record" | "saved" | "growth" | "work" | "diary";
+/** 브라우저 음성 인식 (크롬·삼성 인터넷). 없는 브라우저도 있다 */
+type SpeechRec = {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((e: { results: { 0: { 0: { transcript: string } } } }) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+};
+
+type Mode = "home" | "field" | "pick" | "label" | "record" | "saved" | "growth" | "work" | "diary";
 
 const GREEN = "#16a34a";
 const NOT_ON_LABEL = "라벨에서 확인되지 않음";
+const NOT_IN_DATA = "공식 자료에 적혀 있지 않음";
 const FARM_TYPES: FarmType[] = ["노지", "시설하우스", "스마트팜"];
 const FARM_MODES: { mode: FarmMode; icon: string; desc: string }[] = [
   { mode: "농사", icon: "🚜", desc: "논밭·과수원·하우스" },
@@ -271,6 +285,10 @@ export default function PhotoDoctorV2() {
   const [label, setLabel] = useState<Label | null>(null);
   const [labelFiles, setLabelFiles] = useState<File[]>([]);
   const [thumb, setThumb] = useState("");
+  const [nameQ, setNameQ] = useState("");
+  const [candidates, setCandidates] = useState<Label[]>([]);
+  const [officialSource, setOfficialSource] = useState("");
+  const [listening, setListening] = useState(false);
 
   // 기록 입력
   const [useIdx, setUseIdx] = useState(-1);
@@ -322,6 +340,8 @@ export default function PhotoDoctorV2() {
   const advice = cur && hasWeather ? weatherAdvice(weather, cur) : [];
 
   function resetForm() {
+    setCandidates([]);
+    setNameQ("");
     setLabel(null);
     setLabelFiles([]);
     setThumb("");
@@ -418,7 +438,91 @@ export default function PhotoDoctorV2() {
   }
 
   // ───── 라벨 사진 → AI 읽기 ─────
-  async function readLabel(files: File[]) {
+  /** 제품 하나를 결과 화면에 올린다 (공식 자료·라벨 읽기 공통) */
+  function showProduct(raw: Label, files: File[]) {
+    if (!cur) return;
+    const uses = Array.isArray(raw.uses) ? raw.uses : [];
+    const ai = raw.my_use_index;
+    const idx =
+      typeof ai === "number" && ai >= 0 && ai < uses.length ? ai : matchUseIndex(uses, cur.crop);
+    setLabel({ ...raw, uses });
+    setUseIdx(idx >= 0 ? idx : uses.length > 0 ? -2 : -1);
+    setTankL(tankPresets(modeOf(cur))[0]);
+    setLabelFiles(files.slice(0, 2));
+    setMode("label");
+  }
+
+  // ───── 제품 이름으로 찾기 (공식 등록 자료, AI를 쓰지 않는다) ─────
+  async function searchName(raw: string) {
+    const q = raw.trim();
+    if (!cur) return;
+    if (q.replace(/\s+/g, "").length < 2) {
+      setError("제품 이름을 두 글자 이상 넣어 주세요.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/v2/product?q=${encodeURIComponent(q)}&crop=${encodeURIComponent(cur.crop)}`);
+      const data = await res.json().catch(() => null);
+      if (!data) throw new Error(`서버가 응답하지 못했습니다. 잠시 뒤 다시 해 주세요. (코드: HTTP ${res.status})`);
+      if (!data.ok) {
+        throw new Error(`${data.error || "제품을 찾지 못했습니다."}${data.code ? ` (코드: ${data.code})` : ""}${data.detail ? ` [${data.detail}]` : ""}`);
+      }
+      const list = (Array.isArray(data.products) ? data.products : []) as Label[];
+      setOfficialSource(typeof data.source === "string" ? data.source : "");
+      setThumb("");
+      if (list.length === 0) {
+        throw new Error(`'${q}'은(는) 공식 등록 자료에서 찾지 못했습니다. 이름을 다시 확인하거나, 라벨 뒷면의 사용법 표를 찍어 주세요.`);
+      }
+      if (list.length === 1) {
+        showProduct(list[0], []);
+      } else {
+        setCandidates(list);
+        setLabelFiles([]);
+        setMode("pick");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "제품을 찾지 못했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ───── 말로 제품 이름 넣기 ─────
+  function startVoice() {
+    const w = window as unknown as { SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec };
+    const Rec = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Rec) {
+      setError("이 휴대폰 브라우저는 말로 넣기가 안 됩니다. 이름을 글자로 넣어 주세요.");
+      return;
+    }
+    try {
+      const rec = new Rec();
+      rec.lang = "ko-KR";
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      rec.onresult = (e) => {
+        const said = (e.results[0][0].transcript || "").replace(/[.?!]/g, "").trim();
+        setNameQ(said);
+        if (said) void searchName(said);
+      };
+      rec.onerror = () => {
+        setListening(false);
+        setError("말소리를 듣지 못했습니다. 마이크 사용을 허용했는지 확인하고 다시 눌러 주세요.");
+      };
+      rec.onend = () => setListening(false);
+      setError("");
+      setListening(true);
+      rec.start();
+    } catch {
+      setListening(false);
+      setError("말로 넣기를 시작하지 못했습니다. 이름을 글자로 넣어 주세요.");
+    }
+  }
+
+  /** skipOfficial: 공식 자료에 사용량이 없어 뒷면 표를 직접 읽을 때 */
+  async function readLabel(files: File[], skipOfficial = false) {
     if (files.length === 0 || !cur) return;
     setLoading(true);
     setError("");
@@ -448,17 +552,24 @@ export default function PhotoDoctorV2() {
         );
       }
       const raw = data.label as Label;
-      const uses = Array.isArray(raw.uses) ? raw.uses : [];
-      const ai = raw.my_use_index;
-      const idx =
-        typeof ai === "number" && ai >= 0 && ai < uses.length
-          ? ai
-          : matchUseIndex(uses, cur.crop);
-      setLabel({ ...raw, uses });
-      setUseIdx(idx >= 0 ? idx : uses.length > 0 ? -2 : -1);
-      setTankL(tankPresets(modeOf(cur))[0]);
-      setLabelFiles(files.slice(0, 2));
-      setMode("label");
+      // 상표 이름이 공식 등록 자료에 있으면 그 사용법을 쓴다 (앞면 한 장으로 끝)
+      const off = skipOfficial
+        ? null
+        : (data.official as { source?: string; products?: Label[]; picked?: number } | undefined);
+      const offList = Array.isArray(off?.products) ? off.products : [];
+      if (offList.length > 0) {
+        setOfficialSource(off?.source ?? "");
+        const picked = typeof off?.picked === "number" ? off.picked : -1;
+        if (offList.length === 1 || picked >= 0) {
+          showProduct(offList[picked >= 0 ? picked : 0], files);
+        } else {
+          setCandidates(offList);
+          setLabelFiles(files.slice(0, 2));
+          setMode("pick");
+        }
+      } else {
+        showProduct(raw, files);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "라벨을 읽지 못했습니다.");
     } finally {
@@ -488,6 +599,19 @@ export default function PhotoDoctorV2() {
   // ───── 내 밭 기준 계산 ─────
   const chosenUse = label && useIdx >= 0 ? label.uses[useIdx] : null;
   const offLabel = !!label && label.uses.length > 0 && useIdx === -2;
+  const official = label?.source === "official";
+  const missing = official ? NOT_IN_DATA : NOT_ON_LABEL;
+  // 내 작물에 등록된 줄이 여러 개면(병해충별) 골라서 본다
+  const myUses =
+    label && cur
+      ? label.uses
+          .map((u, i) => ({ u, i }))
+          .filter(({ u }) => matchUseIndex([u], cur.crop) === 0)
+      : [];
+  // 최근에 기록한 제품 (다시 찾기 쉽게)
+  const recentProducts = Array.from(
+    new Set(entries.filter((e) => e.kind === "spray" && e.product && e.product !== "이름 모름").map((e) => e.product as string))
+  ).slice(0, 6);
   const dose = chosenUse ? doseLines(chosenUse, cur?.area, Number(tankL) || 0) : [];
   const rotation =
     label && cur ? rotationWarning(entries, cur.name, label.category, label.moa_code) : null;
@@ -811,11 +935,53 @@ export default function PhotoDoctorV2() {
           {weatherCard}
 
           <div style={{ ...S.card, border: `2px solid ${GREEN}` }}>
-            <div style={{ fontSize: 22, fontWeight: 900 }}>💊 약·영양제 라벨</div>
+            <div style={{ fontSize: 22, fontWeight: 900 }}>💊 약·영양제 사용법</div>
             <div style={{ fontSize: 15, color: "#555" }}>
-              라벨 사진으로 내 작물 사용법과 약량을 알려 드려요
+              상표(앞면)만 찍거나 이름만 넣으면 내 작물 사용법과 약량을 알려 드려요
             </div>
             <PhotoButtons testid="label" disabled={loading} onFile={(f) => void readLabel([f])} />
+            <form
+              style={{ display: "flex", gap: 8, marginTop: 12 }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                void searchName(nameQ);
+              }}
+            >
+              <input
+                data-testid="name-q"
+                value={nameQ}
+                onChange={(e) => setNameQ(e.target.value)}
+                placeholder="제품 이름 (예: 코니도)"
+                enterKeyHint="search"
+                style={{ ...S.input, flex: 1, minWidth: 0, marginTop: 0 }}
+              />
+              <button
+                type="button"
+                data-testid="name-voice"
+                aria-label="말로 넣기"
+                disabled={loading || listening}
+                onClick={startVoice}
+                style={{ ...chip(listening), fontSize: 22, padding: "0 14px" }}
+              >
+                {listening ? "👂" : "🎤"}
+              </button>
+              <button type="submit" data-testid="name-go" disabled={loading} style={{ ...chip(true), padding: "0 16px" }}>
+                찾기
+              </button>
+            </form>
+            {listening && <div style={{ marginTop: 6, fontWeight: 800 }}>듣고 있어요. 제품 이름을 말해 주세요.</div>}
+            {recentProducts.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 14, color: "#555" }}>최근 쓴 것</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+                  {recentProducts.map((n) => (
+                    <button key={n} style={chip(false)} disabled={loading} onClick={() => void searchName(n)}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <button
             style={S.bigBtn}
@@ -846,8 +1012,37 @@ export default function PhotoDoctorV2() {
             🧠 작물이 이상해요 (병해충 진단)
           </Link>
           <p style={{ fontSize: 14, color: "#555", marginTop: 16 }}>
-            일지는 이 휴대폰에만 저장됩니다. 사용법과 약량은 라벨에 적힌 숫자로 계산한 것이니, 치기 전에 라벨을 한 번 더 확인하세요.
+            일지는 이 휴대폰에만 저장됩니다. 사용법과 약량은 공식 등록 자료나 라벨에 적힌 숫자로 계산한 것이니, 치기 전에 라벨을 한 번 더 확인하세요.
           </p>
+        </>
+      )}
+
+      {/* ───────── 같은 이름의 제품이 여러 개일 때 고르기 ───────── */}
+      {mode === "pick" && cur && (
+        <>
+          {curCard}
+          <div style={S.card}>
+            <div style={{ fontSize: 20, fontWeight: 900 }}>어느 제품인가요?</div>
+            <div style={{ fontSize: 15, color: "#555" }}>
+              이름이 같아도 제형과 회사에 따라 사용법이 다릅니다. 포장에 적힌 것과 같은 것을 눌러 주세요.
+            </div>
+            {candidates.map((p, i) => (
+              <button
+                key={`${p.product_name}-${p.variant}-${i}`}
+                data-testid={`pick-${i}`}
+                style={{ ...S.subBtn, textAlign: "left" }}
+                onClick={() => showProduct(p, labelFiles)}
+              >
+                <div style={{ fontWeight: 900 }}>
+                  {p.product_name}
+                  {p.my_use_index !== null ? ` · ${cur.crop} 등록` : ""}
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>
+                  {[p.category, p.variant].filter(Boolean).join(" · ")}
+                </div>
+              </button>
+            ))}
+          </div>
         </>
       )}
 
@@ -865,6 +1060,11 @@ export default function PhotoDoctorV2() {
               <div style={{ color: "#555", fontSize: 16 }}>
                 {[label.category, label.maker, label.ingredient].filter(Boolean).join(" · ")}
               </div>
+              {official && (
+                <div data-testid="official-badge" style={{ marginTop: 6, fontSize: 14, fontWeight: 800, color: GREEN }}>
+                  ✔ 공식 등록 자료{officialSource ? ` (${officialSource})` : ""}
+                </div>
+              )}
               {label.moa_code && (
                 <div style={{ marginTop: 6, fontWeight: 800 }}>계통(작용기작 표시기호): {label.moa_code}</div>
               )}
@@ -878,7 +1078,7 @@ export default function PhotoDoctorV2() {
               ).map(([k, v]) => (
                 <div key={k} style={{ marginTop: 12 }}>
                   <div style={{ fontWeight: 900, color: GREEN }}>{k}</div>
-                  <div style={{ fontSize: 20, color: v ? "#111" : "#888" }}>{v ?? NOT_ON_LABEL}</div>
+                  <div style={{ fontSize: 20, color: v ? "#111" : "#888" }}>{v ?? missing}</div>
                 </div>
               ))}
               <button style={S.subBtn} onClick={() => speak(label)}>
@@ -892,6 +1092,19 @@ export default function PhotoDoctorV2() {
               <div style={{ fontWeight: 900 }}>
                 내 {cur.crop} 기준{chosenUse.target ? ` · ${chosenUse.target}` : ""}
               </div>
+              {myUses.length > 1 && (
+                <div style={{ margin: "8px 0" }}>
+                  <div style={{ fontSize: 15, color: "#555" }}>무엇 때문에 치시나요?</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+                    {myUses.map(({ u, i }) => (
+                      <button key={i} data-testid={`use-${i}`} style={chip(useIdx === i)} onClick={() => setUseIdx(i)}>
+                        {u.target ?? u.crop}
+                        {u.dilution ? ` ${u.dilution}` : u.per_10a_amount !== null ? ` ${u.per_10a_amount}${u.per_10a_unit}` : ""}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div>
                 {[
                   chosenUse.dilution && `희석 ${chosenUse.dilution}`,
@@ -900,7 +1113,7 @@ export default function PhotoDoctorV2() {
                   typeof chosenUse.phi_days === "number" && `수확 ${chosenUse.phi_days}일 전까지`,
                 ]
                   .filter(Boolean)
-                  .join(" / ") || NOT_ON_LABEL}
+                  .join(" / ") || missing}
               </div>
               {dose.map((d) => (
                 <div key={d} style={{ fontSize: 21, fontWeight: 900, marginTop: 6 }}>
@@ -908,13 +1121,19 @@ export default function PhotoDoctorV2() {
                 </div>
               ))}
               {dose.length === 0 && (
-                <div style={{ color: "#888" }}>라벨에 희석배수·사용량 숫자가 없어 약량은 계산하지 않았습니다.</div>
+                <div style={{ color: "#888" }}>
+                  {official ? "공식 자료에" : "라벨에"} 희석배수·사용량 숫자가 없어 약량은 계산하지 않았습니다.
+                </div>
               )}
             </div>
           )}
           {offLabel && (
             <div style={S.warn}>
-              이 라벨의 사용 표에 {cur.crop}이(가) 없습니다. 등록되지 않은 작물에는 쓰면 안 되니, 치기 전에 농약사에 꼭 확인하세요.
+              {official && label.category === "유기농업자재"
+                ? `공식 자료에는 이 자재의 시험 작물(${Array.from(new Set(label.uses.map((u) => u.crop))).slice(0, 4).join(", ")})만 올라 있습니다. ${cur.crop}에 쓰는 양과 방법은 라벨 뒷면을 확인하세요.`
+                : official
+                ? `공식 등록 자료에서 이 제품의 ${cur.crop} 사용법을 찾지 못했습니다. 이 자료에 빠진 작물도 있으니 라벨 뒷면의 적용 작물을 확인하고, 라벨에도 없으면 쓰지 마세요.`
+                : `이 라벨의 사용 표에 ${cur.crop}이(가) 없습니다. 등록되지 않은 작물에는 쓰면 안 되니, 치기 전에 농약사에 꼭 확인하세요.`}
             </div>
           )}
           {label.readable && indoorNote && <div style={S.card}>{indoorNote}</div>}
@@ -922,7 +1141,7 @@ export default function PhotoDoctorV2() {
 
           {label.uses.length > 0 && (
             <div style={S.card}>
-              <div style={{ fontWeight: 900 }}>라벨의 사용 표 (전체)</div>
+              <div style={{ fontWeight: 900 }}>{official ? "공식 등록 사용 표 (전체)" : "라벨의 사용 표 (전체)"}</div>
               {label.uses.map((u, i) => (
                 <div key={i} style={{ borderTop: i ? "1px solid #e5e7eb" : "none", padding: "8px 0", fontSize: 17 }}>
                   <b>{u.crop}</b>
@@ -935,21 +1154,27 @@ export default function PhotoDoctorV2() {
                       typeof u.phi_days === "number" && `수확 ${u.phi_days}일 전까지`,
                     ]
                       .filter(Boolean)
-                      .join(" / ") || NOT_ON_LABEL}
+                      .join(" / ") || missing}
                   </div>
                 </div>
               ))}
             </div>
           )}
 
-          {(label.need_more || label.uses.length === 0) && labelFiles.length < 2 && (
+          {!official && (label.need_more || label.uses.length === 0) && labelFiles.length < 2 && (
             <div style={S.card}>
               <b>{label.need_more ?? "사용법 표가 있는 면을 한 장 더 넣어 주세요"}</b>
               <PhotoButtons
                 testid="more"
                 disabled={loading}
-                onFile={(f) => void readLabel([labelFiles[0], f])}
+                onFile={(f) => void readLabel(labelFiles[0] ? [labelFiles[0], f] : [f], true)}
               />
+            </div>
+          )}
+          {official && (offLabel || (chosenUse && dose.length === 0)) && (
+            <div style={S.card}>
+              <b>라벨 뒷면의 사용법 표를 한 장 찍으면 라벨에 적힌 대로 다시 알려 드려요</b>
+              <PhotoButtons testid="more" disabled={loading} onFile={(f) => void readLabel([f], true)} />
             </div>
           )}
 

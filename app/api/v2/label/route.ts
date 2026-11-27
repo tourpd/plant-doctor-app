@@ -3,6 +3,8 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { normalizeImage } from "../../../../lib/serverImage";
+import { OFFICIAL_SOURCE, pickVariant } from "../../../v2/lib/official";
+import { findOfficial } from "../../../v2/lib/officialFetch";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -32,7 +34,7 @@ const SYSTEM_PROMPT = `
   "product_name": string | null,
   "maker": string | null,
   "category": "살충제" | "살균제" | "제초제" | "영양제" | "비료" | "기타",
-  "ingredient": string | null,    // 주성분과 함량
+  "ingredient": string | null,    // 주성분과 함량. 제형(수화제, 액상수화제, 유제, 입제 등)이 보이면 함께 적는다
   "moa_code": string | null,      // 작용기작 표시기호. 라벨에 적힌 그대로 (예: "1a", "다3"). 없으면 null
   "summary": {
     "where": string | null,       // 어디에 쓰나 (작물·병해충)
@@ -202,7 +204,30 @@ export async function POST(req: Request) {
       );
     }
 
-    const parsed = safeJsonParse(completion.choices[0].message.content ?? "");
+    const parsed = safeJsonParse(completion.choices[0].message.content ?? "") as {
+      product_name?: string | null;
+      maker?: string | null;
+      ingredient?: string | null;
+    };
+
+    // 상표 이름을 읽었으면 공식 등록 자료에서 사용법을 찾아 붙인다 (앞면 한 장으로 끝내기 위해)
+    const name = typeof parsed?.product_name === "string" ? parsed.product_name : "";
+    if (name) {
+      const found = await findOfficial(name, crop);
+      if (found.ok && found.products.length > 0) {
+        // 이름이 똑같은 제품만 쓴다 (비슷한 이름의 다른 제품을 잘못 붙이지 않게)
+        const key = name.replace(/\s+/g, "");
+        const exact = found.products.filter((p) => p.product_name.replace(/\s+/g, "") === key);
+        if (exact.length > 0) {
+          const hint = [name, parsed.ingredient ?? "", parsed.maker ?? ""].join(" ");
+          return NextResponse.json({
+            ok: true,
+            label: parsed,
+            official: { source: OFFICIAL_SOURCE, products: exact.slice(0, 12), picked: pickVariant(exact, hint) },
+          });
+        }
+      }
+    }
     return NextResponse.json({ ok: true, label: parsed });
   } catch (e: unknown) {
     console.error("❌ LABEL API ERROR:", e);
