@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { normalizeImage } from "../../../../lib/serverImage";
 import { aiFailure, errCode, isSpendLimit, safeJsonParse } from "../../../v2/lib/aiUtil";
-import { OFFICIAL_SOURCE } from "../../../v2/lib/official";
+import { OFFICIAL_SOURCE, diversifyByMoa } from "../../../v2/lib/official";
 import { findForTarget } from "../../../v2/lib/officialFetch";
 
 export const runtime = "nodejs";
@@ -49,7 +49,6 @@ const SYSTEM_PROMPT = `
 `;
 
 type Cause = { name: string; kind: string; confidence: number; why: string };
-
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
@@ -163,7 +162,9 @@ export async function POST(req: Request) {
             ok: r.ok,
             code: r.ok ? null : r.code,
             target: r.ok ? r.target : null,
-            products: r.products.slice(0, 15),
+            total: r.products.length,
+            moa_groups: new Set(r.products.map((p) => (p.moa_code ?? "").replace(/\s+/g, "") || "-")).size,
+            products: diversifyByMoa(r.products, 10),
           },
         };
       })

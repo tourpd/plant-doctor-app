@@ -258,3 +258,33 @@ export function pickVariant(products: OfficialProduct[], hint: string): number {
   if (scored.length > 1 && scored[0].score === scored[1].score) return -1;
   return scored[0].i;
 }
+
+/**
+ * 등록 약이 수백 가지일 때(고추 탄저병 400여 가지) 농민이 고를 수 있게 추린다.
+ * 제조사 자료(도프)를 먼저 두고, 나머지는 계통(작용기작)마다 돌아가며 골라 교호 살포가 되게 한다.
+ * 드론 전용 줄만 있는 약은 뒤로 보낸다.
+ */
+export function diversifyByMoa(products: OfficialProduct[], n: number): OfficialProduct[] {
+  const maker = products.filter((p) => p.source_label);
+  const rest = products.filter((p) => !p.source_label);
+  const isDrone = (p: OfficialProduct) => !!p.uses[p.my_use_index ?? 0]?.drone;
+  const groups = new Map<string, OfficialProduct[]>();
+  for (const p of [...rest.filter((p) => !isDrone(p)), ...rest.filter(isDrone)]) {
+    const k = (p.moa_code ?? "").replace(/\s+/g, "") || "표시 없음";
+    groups.set(k, [...(groups.get(k) ?? []), p]);
+  }
+  const out: OfficialProduct[] = [...maker];
+  const seen = new Set<string>();
+  const lists = Array.from(groups.values());
+  for (let round = 0; out.length < n && lists.some((l) => l.length > round); round++) {
+    for (const l of lists) {
+      const p = l[round];
+      if (!p || out.length >= n) continue;
+      const key = `${p.product_name}|${p.variant}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(p);
+    }
+  }
+  return out;
+}

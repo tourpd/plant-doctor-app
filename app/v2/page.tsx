@@ -94,7 +94,7 @@ type DiagCause = {
   kind: "병해" | "해충" | "생리장해" | "환경";
   confidence: number;
   why: string;
-  rx: { ok: boolean; code: string | null; target: string | null; products: Label[] } | null;
+  rx: { ok: boolean; code: string | null; target: string | null; total?: number; moa_groups?: number; products: Label[] } | null;
 };
 type Diagnosis = {
   readable: boolean;
@@ -1303,8 +1303,13 @@ export default function PhotoDoctorV2() {
                 {pest && c.rx && rx.length > 0 && (
                   <div style={{ marginTop: 10 }}>
                     <div style={{ fontWeight: 900, color: GREEN }}>
-                      내 {cur.crop} {c.rx.target ?? c.name}에 등록된 약 {rx.length}가지 — 누르면 내 통·평수에 맞춰 알려 드려요
+                      내 {cur.crop} {c.rx.target ?? c.name}에 등록된 약{" "}
+                      {c.rx.total && c.rx.total > rx.length
+                        ? `${c.rx.total.toLocaleString("ko-KR")}가지 중 계통별로 ${rx.length}가지`
+                        : `${rx.length}가지`}{" "}
+                      — 누르면 내 통·평수에 맞춰 알려 드려요
                     </div>
+                    <div style={{ fontSize: 14, color: "#666" }}>[ ] 안은 계통입니다. 같은 계통을 이어 치지 말고 번갈아 치세요.</div>
                     {rx.map(({ p, rot }, pi) => {
                       const u = p.uses[p.my_use_index ?? 0];
                       const dof = (p.maker ?? "").includes("도프");
@@ -1327,6 +1332,7 @@ export default function PhotoDoctorV2() {
                               u?.dilution && `${u.dilution}`,
                               typeof u?.phi_days === "number" && `수확 ${u.phi_days}일 전까지`,
                               typeof u?.max_count === "number" && `${u.max_count}회 이내`,
+                              u?.drone ? "🚁 드론용" : null,
                               p.source_label ? "제조사 자료" : null,
                             ]
                               .filter(Boolean)
