@@ -37,6 +37,7 @@ export type OfficialUse = {
   timing: string | null;
   max_count: number | null;
   phi_days: number | null;
+  drone?: boolean; // 드론(무인항공) 전용 사용법
 };
 
 export type OfficialProduct = {
@@ -91,6 +92,12 @@ export function parseCount(text: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** 드론(무인항공기) 전용으로 등록된 줄인지 */
+export function isDroneRow(r: OfficialRow): boolean {
+  const text = [s(r.C_USE_MTHD_REGVL), s(r.C_USE_PPRTM_REGVL), s(r.C_USGQTY_REGVL)].join(" ");
+  return /무인|항공|드론/.test(text);
+}
+
 function categoryOf(r: OfficialRow): string {
   const p = s(r.A_PRPS_REGVL);
   if (p.includes("살충") || p === "균충") return p === "균충" ? "살균·살충제" : "살충제";
@@ -103,7 +110,14 @@ function categoryOf(r: OfficialRow): string {
 function toUse(r: OfficialRow): OfficialUse {
   const qty = s(r.C_USGQTY_REGVL);
   const dil = parseDilution(s(r.A_DLTN_MLTPL_REGVL), qty);
-  const per = parsePer10a(qty);
+  let per = parsePer10a(qty);
+  // 드론(무인항공) 전용 등록: 진하게 타서 10a에 1L 안팎만 뿌린다. 이때 사용량 칸의 L는 약이 아니라 희석액 양이다
+  const drone = isDroneRow(r);
+  let sprayL: number | null = null;
+  if (drone && per.amount !== null && (per.unit === "L" || per.unit === "ml")) {
+    sprayL = per.unit === "ml" ? per.amount / 1000 : per.amount;
+    per = { amount: null, unit: null };
+  }
   const era = s(r.A_SAFE_USE_ERA_REGVL);
   const phi = parsePhi(era);
   const timing = [
@@ -112,6 +126,7 @@ function toUse(r: OfficialRow): OfficialUse {
     // 사용량이 희석배수도 10a 기준도 아니면(예: 2g/주) 글자 그대로 보여 준다
     !blank(qty) && dil.x === null && per.amount === null ? `사용량 ${qty}` : "",
     per.amount !== null ? `10a당 ${per.amount}${per.unit}` : "",
+    sprayL !== null ? `드론 살포량 10a당 ${sprayL}L` : "",
     // "정식기"처럼 수확 전 일수가 아닌 안전사용 시기는 글자 그대로
     !blank(era) && phi === null ? `${era}까지` : "",
   ]
@@ -124,10 +139,11 @@ function toUse(r: OfficialRow): OfficialUse {
     dilution_x: dil.x,
     per_10a_amount: per.amount,
     per_10a_unit: per.unit,
-    spray_l_per_10a: null,
+    spray_l_per_10a: sprayL,
     timing: timing || null,
     max_count: parseCount(s(r.A_SAFE_USE_NOFTM_REGVL)),
     phi_days: phi,
+    ...(drone ? { drone: true } : {}),
   };
 }
 

@@ -2,7 +2,7 @@
 // 제품 이름(상표명)으로 공식 등록 사용법을 찾는다. AI를 쓰지 않아 비용이 들지 않는다.
 import { NextResponse } from "next/server";
 import { OFFICIAL_SOURCE } from "../../../v2/lib/official";
-import { findOfficial } from "../../../v2/lib/officialFetch";
+import { fetchRows, findOfficial } from "../../../v2/lib/officialFetch";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -11,6 +11,18 @@ export async function GET(req: Request) {
   const sp = new URL(req.url).searchParams;
   const q = (sp.get("q") ?? "").slice(0, 40);
   const crop = (sp.get("crop") ?? "").replace(/[\r\n]/g, " ").trim().slice(0, 30);
+  // 점검용: 자료 원문 중 특정 글자가 든 줄만 본다 (열쇠는 내보내지 않는다)
+  const grep = (sp.get("grep") ?? "").slice(0, 20);
+  if (grep && process.env.MAFRA_API_KEY) {
+    const rows = await fetchRows(q.replace(/\s+/g, "")).catch(() => []);
+    const hit = rows.filter((x) => JSON.stringify(x).includes(grep)).slice(0, 6);
+    return NextResponse.json({
+      total: rows.length,
+      hit: hit.map((x) =>
+        [x.C_BRAND_NM, x.C_ITEM_NM, x.C_CROP_NM, x.C_APLCN_DSINST_NM, x.A_DLTN_MLTPL_REGVL, x.C_USGQTY_REGVL, x.C_USE_PPRTM_REGVL, x.C_USE_MTHD_REGVL, x.A_SAFE_USE_ERA_REGVL, x.A_SAFE_USE_NOFTM_REGVL].join(" | ")
+      ),
+    });
+  }
   const r = await findOfficial(q, crop);
   if (!r.ok) {
     const error =

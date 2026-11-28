@@ -20,7 +20,7 @@ export function cleanName(v: string): string {
   return v.replace(/[\r\n\t]/g, " ").replace(/[^0-9A-Za-z가-힣ㄱ-ㅎ\s\-+.]/g, "").trim().slice(0, 30);
 }
 
-async function fetchRows(name: string): Promise<OfficialRow[]> {
+export async function fetchRows(name: string): Promise<OfficialRow[]> {
   const hit = cache.get(name);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.rows;
 

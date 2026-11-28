@@ -1,7 +1,7 @@
 // 포토닥터 2 — 알림·교호 살포·추천 규칙
 // AI를 쓰지 않는 고정 규칙이다. 비용 0원, 엉뚱한 안내 방지.
 
-import type { Entry, FarmMode, Field } from "./store";
+import type { Entry, FarmMode, Field, Sprayer } from "./store";
 
 export function today(): string {
   return toDateStr(new Date());
@@ -165,6 +165,7 @@ export function buildAlerts(entries: Entry[]): Alert[] {
 export const PYEONG_PER_10A = 302.5; // 10a = 1,000㎡ = 약 302.5평
 
 export type DoseInput = {
+  drone?: boolean; // 드론(무인항공) 전용으로 등록된 사용법
   dilution_x: number | null; // 희석배수 (1000배면 1000)
   per_10a_amount: number | null; // 10a당 사용량 숫자
   per_10a_unit: string | null; // 그 단위 (kg, g, ml, L 등)
@@ -205,6 +206,156 @@ export function doseLines(
     }
   }
   return lines;
+}
+
+// ───────── 내 통에 맞춘 살포 계획 ─────────
+
+export type TankOption = { sprayer: Sprayer; liters: number; label: string };
+
+/** 밭 등록 때 고르는 통. 직접 입력도 받는다 */
+export function tankOptions(mode: FarmMode): TankOption[] {
+  if (mode === "베란다")
+    return [
+      { sprayer: "분무기", liters: 0.5, label: "분무기 0.5L" },
+      { sprayer: "분무기", liters: 1, label: "분무기 1L" },
+      { sprayer: "분무기", liters: 2, label: "분무기 2L" },
+    ];
+  if (mode === "텃밭")
+    return [
+      { sprayer: "분무기", liters: 2, label: "분무기 2L" },
+      { sprayer: "분무기", liters: 5, label: "압축 분무기 5L" },
+      { sprayer: "등짐", liters: 20, label: "등짐 분무기 20L" },
+    ];
+  return [
+    { sprayer: "등짐", liters: 20, label: "등짐 분무기 20L" },
+    { sprayer: "동력", liters: 200, label: "동력분무기 200L 통" },
+    { sprayer: "동력", liters: 500, label: "동력분무기 500L 통" },
+    { sprayer: "동력", liters: 1000, label: "동력분무기 1,000L 통" },
+    { sprayer: "드론", liters: 16, label: "드론 16L 통" },
+  ];
+}
+
+const FRUIT_TREES = ["사과", "배", "복숭아", "포도", "감", "감귤", "귤", "자두", "매실", "대추", "밤", "체리", "살구", "유자", "키위", "참다래", "블루베리", "무화과", "석류", "호두"];
+
+/**
+ * 10a(약 300평)에 드는 물량의 일반 기준. 공식 자료에도 라벨에도 없는 숫자라
+ * 화면에 "일반 기준"이라고 밝히고, 농민이 실제로 쓴 물량을 기록하면 그 값으로 바꾼다.
+ */
+export function defaultWaterPer10a(crop: string): number {
+  const c = crop.replace(/\s+/g, "");
+  if (FRUIT_TREES.some((f) => c.includes(f))) return 300;
+  if (c.includes("벼")) return 120;
+  return 150;
+}
+
+export type SprayPlan = {
+  lines: string[]; // 크게 보여 줄 줄
+  waterL: number | null; // 이번에 필요한 물(희석액) 양
+  basis: string; // 물량이 어디서 나온 숫자인지
+  blocked: string; // 계산하면 안 되는 이유 (드론 미등록 등)
+};
+
+function fmtAmt(mlOrG: number): string {
+  return mlOrG >= 1000 ? `${fmt(mlOrG / 1000)}L(kg)` : `${fmt(mlOrG)}ml(g)`;
+}
+
+function tanksText(waterL: number, tankL: number): string {
+  const n = waterL / tankL;
+  if (n <= 1.05) {
+    const part = Math.round(n * 10) / 10;
+    return part >= 0.95 ? "한 통" : `한 통에 못 미칩니다. 통에 물을 ${fmt(waterL)}L만 받으세요`;
+  }
+  const full = Math.floor(n + 0.05);
+  const rest = waterL - full * tankL;
+  return rest > tankL * 0.08 ? `${full}통 가득 + 마지막 통은 ${fmt(rest)}L만` : `${full}통`;
+}
+
+/**
+ * 내 통 크기와 평수에 맞춘 답.
+ * 희석배수·사용량은 자료 숫자 그대로 쓰고, 여기서 정하는 것은 물량뿐이다.
+ */
+export function sprayPlan(
+  use: DoseInput,
+  opts: {
+    areaPyeong?: number;
+    sprayer?: Sprayer;
+    tankL?: number;
+    waterPer10a?: number; // 이 밭에서 배운 값
+    crop?: string;
+    product?: string;
+    adjust?: number; // 물량 조절(적게 0.7 · 보통 1 · 많이 1.4)
+  }
+): SprayPlan {
+  const lines: string[] = [];
+  const name = opts.product || "약";
+  const tank = opts.tankL && opts.tankL > 0 ? opts.tankL : 20;
+  const area = opts.areaPyeong && opts.areaPyeong > 0 ? opts.areaPyeong : 0;
+  const ratio = area / PYEONG_PER_10A;
+  const x = use.dilution_x && use.dilution_x > 0 ? use.dilution_x : 0;
+  const isDrone = opts.sprayer === "드론";
+
+  if (isDrone && !use.drone) {
+    return {
+      lines: [],
+      waterL: null,
+      basis: "",
+      blocked: "이 사용법은 드론(무인항공)용으로 등록된 것이 아닙니다. 드론으로 치지 말고, 드론 전용 등록 약제인지 라벨을 확인하세요.",
+    };
+  }
+  if (!isDrone && use.drone) {
+    return {
+      lines: [],
+      waterL: null,
+      basis: "",
+      blocked: "이 줄은 드론(무인항공) 전용 사용법입니다. 등짐·동력분무기로 칠 때는 다른 줄을 고르세요.",
+    };
+  }
+
+  // 드론: 자료에 적힌 10a당 살포량(희석액)을 그대로 쓴다
+  if (isDrone) {
+    const per10a = use.spray_l_per_10a && use.spray_l_per_10a > 0 ? use.spray_l_per_10a : 0;
+    if (!x || !per10a) return { lines: [], waterL: null, basis: "", blocked: "드론용 희석배수나 살포량이 자료에 없어 계산하지 않았습니다. 라벨을 확인하세요." };
+    lines.push(`드론 ${fmt(tank)}L 통 가득이면 → ${name} ${fmtAmt((tank * 1000) / x)} (${fmt(x)}배)`);
+    if (area) {
+      const liquid = per10a * ratio;
+      const flights = Math.ceil(liquid / tank - 0.02);
+      lines.push(`내 밭 ${fmt(area)}평 → 뿌릴 양 약 ${fmt(liquid)}L, ${name} ${fmtAmt((liquid * 1000) / x)}`);
+      lines.push(flights <= 1 ? "한 번 비행으로 끝납니다" : `${fmt(tank)}L 통으로 ${flights}번 떠야 합니다`);
+      return { lines, waterL: liquid, basis: `등록 기준: 10a당 ${fmt(per10a)}L`, blocked: "" };
+    }
+    return { lines, waterL: null, basis: `등록 기준: 10a당 ${fmt(per10a)}L`, blocked: "" };
+  }
+
+  // 물에 타서 뿌리는 약
+  if (x) {
+    lines.push(`${fmt(tank)}L 통 한 통에 → ${name} ${fmtAmt((tank * 1000) / x)} (${fmt(x)}배)`);
+    if (area) {
+      const learned = opts.waterPer10a && opts.waterPer10a > 0 ? opts.waterPer10a : 0;
+      const per10a =
+        use.spray_l_per_10a && use.spray_l_per_10a > 0
+          ? use.spray_l_per_10a
+          : (learned || defaultWaterPer10a(opts.crop ?? "")) * (opts.adjust && !learned ? opts.adjust : 1);
+      const water = per10a * ratio;
+      lines.push(`내 밭 ${fmt(area)}평 → 물 약 ${fmt(water)}L에 ${name} ${fmtAmt((water * 1000) / x)}`);
+      lines.push(`${fmt(tank)}L 통으로 ${tanksText(water, tank)}`);
+      const basis =
+        use.spray_l_per_10a && use.spray_l_per_10a > 0
+          ? `물량은 등록 기준(10a당 ${fmt(use.spray_l_per_10a)}L)`
+          : learned
+            ? `물량은 이 밭에서 실제로 쓴 기록 기준(300평당 약 ${fmt(learned)}L)`
+            : `물량은 일반 기준(300평당 약 ${fmt(per10a)}L)입니다. 치고 나서 실제로 쓴 물을 적으면 다음부터 내 밭에 맞춰 계산합니다`;
+      return { lines, waterL: water, basis, blocked: "" };
+    }
+    return { lines, waterL: null, basis: "", blocked: "" };
+  }
+
+  // 입제처럼 물에 타지 않고 면적당 양으로 주는 것
+  if (use.per_10a_amount && use.per_10a_amount > 0) {
+    const u = use.per_10a_unit ?? "";
+    if (area) lines.push(`내 밭 ${fmt(area)}평 → ${name} 약 ${fmt(use.per_10a_amount * ratio)}${u}`);
+    return { lines, waterL: null, basis: `기준: 10a(약 300평)당 ${fmt(use.per_10a_amount)}${u}`, blocked: "" };
+  }
+  return { lines: [], waterL: null, basis: "", blocked: "" };
 }
 
 /** 라벨의 작물 이름이 내 작물과 같은 줄 찾기 (AI가 못 골랐을 때 대비) */

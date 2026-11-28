@@ -40,7 +40,13 @@ export type Field = {
   region?: string; // 시·군
   lat?: number;
   lon?: number;
+  sprayer?: Sprayer; // 약 칠 때 쓰는 통의 종류
+  tankL?: number; // 그 통의 크기(L)
+  waterPer10a?: number; // 이 밭에서 실제로 쓴 물량에서 배운 값 (10a당 L)
 };
+
+/** 약 치는 도구. 드론은 희석배수·살포량 체계가 달라 따로 다룬다 */
+export type Sprayer = "등짐" | "동력" | "드론" | "분무기";
 
 const DB_NAME = "photodoctor2";
 const STORE = "entries";
