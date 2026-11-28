@@ -340,7 +340,7 @@ export function sprayPlan(
       lines.push(`${fmt(tank)}L 통으로 ${tanksText(water, tank)}`);
       const basis =
         use.spray_l_per_10a && use.spray_l_per_10a > 0
-          ? `물량은 등록 기준(10a당 ${fmt(use.spray_l_per_10a)}L)`
+          ? `물량은 자료에 적힌 기준(10a당 ${fmt(use.spray_l_per_10a)}L)`
           : learned
             ? `물량은 이 밭에서 실제로 쓴 기록 기준(300평당 약 ${fmt(learned)}L)`
             : `물량은 일반 기준(300평당 약 ${fmt(per10a)}L)입니다. 치고 나서 실제로 쓴 물을 적으면 다음부터 내 밭에 맞춰 계산합니다`;
