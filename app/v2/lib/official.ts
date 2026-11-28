@@ -43,6 +43,7 @@ export type OfficialProduct = {
   readable: true;
   need_more: null;
   source: "official";
+  source_label?: string; // 제조사 자료처럼 공식 등록 자료가 아닐 때 화면에 보일 출처
   variant: string; // 같은 상표의 여러 제형을 구분하는 말 (예: "수화제 10% · 바이엘크롭사이언스(주)")
   product_name: string;
   maker: string | null;

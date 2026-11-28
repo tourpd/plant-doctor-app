@@ -69,6 +69,7 @@ type Label = {
   uses: LabelUse[];
   my_use_index: number | null;
   source?: "official"; // 공식 등록 자료에서 찾은 제품
+  source_label?: string; // 제조사 자료일 때 보일 출처
   variant?: string; // 같은 상표의 여러 제형을 구분하는 말
 };
 
@@ -87,7 +88,7 @@ type Mode = "home" | "field" | "pick" | "label" | "record" | "saved" | "growth" 
 
 const GREEN = "#16a34a";
 const NOT_ON_LABEL = "라벨에서 확인되지 않음";
-const NOT_IN_DATA = "공식 자료에 적혀 있지 않음";
+const NOT_IN_DATA = "자료에 적혀 있지 않음";
 const FARM_TYPES: FarmType[] = ["노지", "시설하우스", "스마트팜"];
 const FARM_MODES: { mode: FarmMode; icon: string; desc: string }[] = [
   { mode: "농사", icon: "🚜", desc: "논밭·과수원·하우스" },
@@ -1062,7 +1063,7 @@ export default function PhotoDoctorV2() {
               </div>
               {official && (
                 <div data-testid="official-badge" style={{ marginTop: 6, fontSize: 14, fontWeight: 800, color: GREEN }}>
-                  ✔ 공식 등록 자료{officialSource ? ` (${officialSource})` : ""}
+                  ✔ {label.source_label ?? `공식 등록 자료${officialSource ? ` (${officialSource})` : ""}`}
                 </div>
               )}
               {label.moa_code && (
@@ -1094,12 +1095,18 @@ export default function PhotoDoctorV2() {
               </div>
               {myUses.length > 1 && (
                 <div style={{ margin: "8px 0" }}>
-                  <div style={{ fontSize: 15, color: "#555" }}>무엇 때문에 치시나요?</div>
+                  <div style={{ fontSize: 15, color: "#555" }}>
+                    {label.category === "영양제" || label.category === "비료" ? "어떻게 주시나요?" : "무엇 때문에 치시나요?"}
+                  </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
                     {myUses.map(({ u, i }) => (
                       <button key={i} data-testid={`use-${i}`} style={chip(useIdx === i)} onClick={() => setUseIdx(i)}>
                         {u.target ?? u.crop}
                         {u.dilution ? ` ${u.dilution}` : u.per_10a_amount !== null ? ` ${u.per_10a_amount}${u.per_10a_unit}` : ""}
+                        {/* 같은 병해충이 두 줄로 올라 있을 때 구분되게 횟수·수확 전 일수를 붙인다 */}
+                        {myUses.filter((m) => m.u.target === u.target).length > 1
+                          ? ` (${[typeof u.max_count === "number" ? `${u.max_count}회` : "", typeof u.phi_days === "number" ? `수확 ${u.phi_days}일 전` : ""].filter(Boolean).join("·")})`
+                          : ""}
                       </button>
                     ))}
                   </div>
@@ -1141,7 +1148,7 @@ export default function PhotoDoctorV2() {
 
           {label.uses.length > 0 && (
             <div style={S.card}>
-              <div style={{ fontWeight: 900 }}>{official ? "공식 등록 사용 표 (전체)" : "라벨의 사용 표 (전체)"}</div>
+              <div style={{ fontWeight: 900 }}>{label.source_label ? "제조사 사용법 (전체)" : official ? "공식 등록 사용 표 (전체)" : "라벨의 사용 표 (전체)"}</div>
               {label.uses.map((u, i) => (
                 <div key={i} style={{ borderTop: i ? "1px solid #e5e7eb" : "none", padding: "8px 0", fontSize: 17 }}>
                   <b>{u.crop}</b>

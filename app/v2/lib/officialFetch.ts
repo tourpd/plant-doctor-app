@@ -1,6 +1,7 @@
 // app/v2/lib/officialFetch.ts  (서버에서만 쓴다)
 // 농식품 빅데이터 클라우드의 "병해충별 자재 정보"를 상표명으로 찾는다.
 // 인증키는 Vercel 환경변수 MAFRA_API_KEY 에만 둔다.
+import { findMakerProducts } from "./makerProducts";
 import { rowsToProducts } from "./official";
 import type { OfficialProduct, OfficialRow } from "./official";
 
@@ -51,6 +52,9 @@ async function fetchRows(name: string): Promise<OfficialRow[]> {
 
 /** 상표명(일부만 넣어도 됨)으로 공식 등록 제품을 찾는다 */
 export async function findOfficial(rawName: string, crop = ""): Promise<OfficialResult> {
+  // 영양제·비료처럼 공식 등록 자료에 없는 제품은 제조사 자료에서 먼저 찾는다 (열쇠가 없어도 된다)
+  const maker = findMakerProducts(cleanName(rawName), crop);
+  if (maker.length > 0) return { ok: true, products: maker };
   if (!process.env.MAFRA_API_KEY) return { ok: false, code: "no-key" };
   const name = cleanName(rawName).replace(/\s+/g, "");
   if (name.length < 2) return { ok: false, code: "bad-name" };

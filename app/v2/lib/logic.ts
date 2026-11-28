@@ -200,7 +200,7 @@ export function doseLines(
     }
     if (use.per_10a_amount && use.per_10a_amount > 0) {
       lines.push(
-        `${fmt(areaPyeong)}평 전체: 약 ${fmt(use.per_10a_amount * ratio)}${use.per_10a_unit ?? ""} (라벨: 10a당 ${fmt(use.per_10a_amount)}${use.per_10a_unit ?? ""})`
+        `${fmt(areaPyeong)}평 전체: 약 ${fmt(use.per_10a_amount * ratio)}${use.per_10a_unit ?? ""} (기준: 10a(약 300평)당 ${fmt(use.per_10a_amount)}${use.per_10a_unit ?? ""})`
       );
     }
   }
