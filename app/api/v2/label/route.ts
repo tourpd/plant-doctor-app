@@ -5,6 +5,7 @@ import OpenAI from "openai";
 import { normalizeImage } from "../../../../lib/serverImage";
 import { OFFICIAL_SOURCE, pickVariant } from "../../../v2/lib/official";
 import { findOfficial } from "../../../v2/lib/officialFetch";
+import { errCode, errDetail, isSpendLimit, safeJsonParse } from "../../../v2/lib/aiUtil";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -65,38 +66,6 @@ const SYSTEM_PROMPT = `
 - 사진에 적용 작물이나 사용법 표가 아예 보이지 않으면(앞면만 찍힌 경우 등) 작물이 없다고 쓰지 않는다. summary.where는 null로 두고 need_more에 "뒷면 사용법 표를 찍어 주세요"라고 쓴다.
 - 농민 정보에 맞춰 숫자를 바꾸거나 계산하지 않는다. 숫자는 라벨 그대로다.
 `;
-
-function safeJsonParse(raw: string): unknown {
-  const text = (raw || "").trim();
-  try {
-    return JSON.parse(text);
-  } catch {}
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start !== -1 && end > start) return JSON.parse(text.slice(start, end + 1));
-  throw new Error("JSON 파싱 실패");
-}
-
-/** OpenAI 오류의 세부 코드 (insufficient_quota, rate_limit_exceeded 등) */
-function errCode(e: unknown): string {
-  const x = e as { code?: string; type?: string; error?: { code?: string; type?: string } };
-  return x?.code || x?.error?.code || x?.type || x?.error?.type || "";
-}
-
-/** OpenAI 계정에 설정한 지출 한도에 걸린 경우 (기다려도 풀리지 않는다) */
-function isSpendLimit(e: unknown): boolean {
-  return /spend limit|hard limit|billing/i.test(String((e as { message?: string })?.message ?? ""));
-}
-
-/** 원인 파악용 짧은 설명. 조직 번호·열쇠처럼 보이는 글자는 지운다 */
-function errDetail(e: unknown): string {
-  const msg = String((e as { message?: string })?.message ?? "");
-  return msg
-    .replace(/org-[A-Za-z0-9]+/g, "org-***")
-    .replace(/sk-[A-Za-z0-9_-]+/g, "sk-***")
-    .replace(/\s+/g, " ")
-    .slice(0, 220);
-}
 
 export async function POST(req: Request) {
   try {

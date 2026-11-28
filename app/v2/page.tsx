@@ -5,7 +5,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, RefObject } from "react";
-import Link from "next/link";
 import {
   deleteEntry,
   getCurrentField,
@@ -87,7 +86,26 @@ type SpeechRec = {
   start: () => void;
 };
 
-type Mode = "home" | "field" | "pick" | "label" | "record" | "saved" | "growth" | "work" | "diary";
+type Mode = "home" | "field" | "pick" | "label" | "record" | "saved" | "growth" | "work" | "diary" | "diag";
+
+/** 사진 진단 결과 (원인마다 내 작물에 등록된 약이 붙어 온다) */
+type DiagCause = {
+  name: string;
+  kind: "병해" | "해충" | "생리장해" | "환경";
+  confidence: number;
+  why: string;
+  rx: { ok: boolean; code: string | null; target: string | null; products: Label[] } | null;
+};
+type Diagnosis = {
+  readable: boolean;
+  retake: string | null;
+  crop_seen: string | null;
+  crop_mismatch: boolean;
+  causes: DiagCause[];
+  now: string[];
+  dont: string[];
+  check: string[];
+};
 
 const GREEN = "#16a34a";
 const NOT_ON_LABEL = "라벨에서 확인되지 않음";
@@ -294,6 +312,9 @@ export default function PhotoDoctorV2() {
   const [label, setLabel] = useState<Label | null>(null);
   const [labelFiles, setLabelFiles] = useState<File[]>([]);
   const [thumb, setThumb] = useState("");
+  const [diag, setDiag] = useState<Diagnosis | null>(null);
+  const [diagThumb, setDiagThumb] = useState("");
+  const [diagSaved, setDiagSaved] = useState(false);
   const [nameQ, setNameQ] = useState("");
   const [candidates, setCandidates] = useState<Label[]>([]);
   const [officialSource, setOfficialSource] = useState("");
@@ -457,7 +478,7 @@ export default function PhotoDoctorV2() {
 
   // ───── 라벨 사진 → AI 읽기 ─────
   /** 제품 하나를 결과 화면에 올린다 (공식 자료·라벨 읽기 공통) */
-  function showProduct(raw: Label, files: File[]) {
+  function showProduct(raw: Label, files: File[], preferTarget = "") {
     if (!cur) return;
     const uses = Array.isArray(raw.uses) ? raw.uses : [];
     const ai = raw.my_use_index;
@@ -475,7 +496,18 @@ export default function PhotoDoctorV2() {
     }
     setRigIdx(ri);
     const wantDrone = rigs[ri]?.sprayer === "드론";
-    const fits = uses.findIndex((u) => matchUseIndex([u], cur.crop) === 0 && !!u.drone === wantDrone);
+    const want = preferTarget.replace(/\s+/g, "");
+    const byTarget = want
+      ? uses.findIndex(
+          (u) =>
+            matchUseIndex([u], cur.crop) === 0 &&
+            !!u.drone === wantDrone &&
+            (u.target ?? "").replace(/\s+|류$/g, "").length > 1 &&
+            (want.includes((u.target ?? "").replace(/\s+|류$/g, "")) || (u.target ?? "").replace(/\s+/g, "").includes(want))
+        )
+      : -1;
+    const fits =
+      byTarget >= 0 ? byTarget : uses.findIndex((u) => matchUseIndex([u], cur.crop) === 0 && !!u.drone === wantDrone);
     const idx =
       fits >= 0
         ? fits
@@ -561,6 +593,82 @@ export default function PhotoDoctorV2() {
   }
 
   /** skipOfficial: 공식 자료에 사용량이 없어 뒷면 표를 직접 읽을 때 */
+  // ───── 작물 사진 → 진단 → 등록 약 처방 ─────
+  async function runDiagnose(files: File[]) {
+    if (files.length === 0 || !cur) return;
+    setLoading(true);
+    setError("");
+    setDiag(null);
+    setDiagSaved(false);
+    try {
+      const form = new FormData();
+      let total = 0;
+      let first: File | null = null;
+      for (const f of files.slice(0, 3)) {
+        const prepared = await prepareImageForUpload(f);
+        total += prepared.file.size;
+        if (!first) first = prepared.file;
+        form.append("images", prepared.file, prepared.file.name || "crop.jpg");
+      }
+      if (total > SERVER_LIMIT) throw new Error("사진 용량이 너무 큽니다. '사진 찍기'로 다시 찍어 주세요.");
+      form.append("crop", cur.crop);
+      form.append("farmType", cur.type ?? "");
+      form.append("region", cur.region ?? "");
+      setDiagThumb((await safeThumb(first ?? files[0], 640, 0.65)) ?? "");
+      const res = await fetch("/api/v2/diagnose", { method: "POST", body: form });
+      const data = await res.json().catch(() => null);
+      if (!data) throw new Error(`서버가 응답하지 못했습니다. 잠시 뒤 다시 해 주세요. (코드: HTTP ${res.status})`);
+      if (!data.ok) {
+        throw new Error(`${data.error || "진단하지 못했습니다."}${data.code ? ` (코드: ${data.code})` : ""}`);
+      }
+      setOfficialSource(data.source ?? "");
+      setDiag(data.diagnosis as Diagnosis);
+      setMode("diag");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "진단하지 못했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /** 처방 목록에서 약을 누르면 그 약의 전체 사용법을 불러와 내 통·평수로 계산한다 */
+  async function openRx(p: Label, target: string) {
+    if (!cur) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/v2/product?q=${encodeURIComponent(p.product_name ?? "")}&crop=${encodeURIComponent(cur.crop)}`);
+      const data = await res.json().catch(() => null);
+      const list: Label[] = Array.isArray(data?.products) ? data.products : [];
+      const same = list.find((x) => x.product_name === p.product_name && x.variant === p.variant);
+      showProduct(same ?? p, [], target);
+    } catch {
+      showProduct(p, [], target);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /** 진단 결과를 사진과 함께 일지에 남긴다 */
+  async function saveDiag() {
+    if (!cur || !diag) return;
+    const top = diag.causes[0];
+    const entry: Entry = {
+      id: newId(),
+      createdAt: Date.now(),
+      date: today(),
+      kind: "diag",
+      field: cur.name,
+      crop: cur.crop,
+      thumb: diagThumb || undefined,
+      target: top?.name ?? null,
+      memo: diag.causes.map((c) => `${c.name} ${c.confidence}%`).join(", ") || undefined,
+    };
+    await putEntry(entry);
+    setEntries(await getEntries());
+    setDiagSaved(true);
+  }
+
   async function readLabel(files: File[], skipOfficial = false) {
     if (files.length === 0 || !cur) return;
     setLoading(true);
@@ -1065,6 +1173,14 @@ export default function PhotoDoctorV2() {
 
           {weatherCard}
 
+          <div style={{ ...S.card, border: "2px solid #b45309" }}>
+            <div style={{ fontSize: 22, fontWeight: 900 }}>🩺 작물이 이상해요</div>
+            <div style={{ fontSize: 15, color: "#555" }}>
+              아픈 잎·열매를 가까이 찍으면 원인과 내 {cur?.crop ?? "작물"}에 등록된 약, 내 통에 맞는 양까지 알려 드려요
+            </div>
+            <PhotoButtons testid="diag" disabled={loading} onFile={(f) => void runDiagnose([f])} />
+          </div>
+
           <div style={{ ...S.card, border: `2px solid ${GREEN}` }}>
             <div style={{ fontSize: 22, fontWeight: 900 }}>💊 약·영양제 사용법</div>
             <div style={{ fontSize: 15, color: "#555" }}>
@@ -1139,9 +1255,6 @@ export default function PhotoDoctorV2() {
           <button style={S.subBtn} onClick={() => setMode("diary")}>
             📖 내 일지 보기 ({entries.length}건)
           </button>
-          <Link href="/ai" style={S.linkBtn}>
-            🧠 작물이 이상해요 (병해충 진단)
-          </Link>
           <p style={{ fontSize: 14, color: "#555", marginTop: 16 }}>
             일지는 이 휴대폰에만 저장됩니다. 사용법과 약량은 공식 등록 자료나 라벨에 적힌 숫자로 계산한 것이니, 치기 전에 라벨을 한 번 더 확인하세요.
           </p>
@@ -1149,6 +1262,125 @@ export default function PhotoDoctorV2() {
       )}
 
       {/* ───────── 같은 이름의 제품이 여러 개일 때 고르기 ───────── */}
+      {mode === "diag" && cur && diag && (
+        <>
+          <button style={S.back} onClick={() => setMode("home")}>
+            ← 처음
+          </button>
+          <h1 style={S.h1}>🩺 사진 진단</h1>
+          <div style={S.sub}>{fieldLine(cur)}</div>
+          {diagThumb && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={diagThumb} alt="" style={{ width: "100%", maxHeight: 260, objectFit: "cover", borderRadius: 14, marginTop: 10 }} />
+          )}
+          {!diag.readable && (
+            <div style={{ ...S.warn, marginTop: 10 }} data-testid="diag-retake">
+              {diag.retake || "사진으로는 판단하기 어렵습니다. 아픈 부분을 밝은 곳에서 가까이 다시 찍어 주세요."}
+            </div>
+          )}
+          {diag.crop_mismatch && (
+            <div style={{ ...S.warn, marginTop: 10 }}>
+              사진 속 작물이 {diag.crop_seen ?? "다른 작물"}(으)로 보입니다. 지금 고른 밭({cur.crop})이 맞는지 확인하세요. 약은 등록된 작물에만 써야 합니다.
+            </div>
+          )}
+          {diag.causes.map((c, ci) => {
+            const pest = c.kind === "병해" || c.kind === "해충";
+            // 지난번과 같은 계통은 아래로 (내성 방지)
+            const rx = (c.rx?.products ?? [])
+              .map((p) => ({ p, rot: rotationWarning(entries, cur.name, p.category, p.moa_code) }))
+              .sort((a, b) => Number(!!a.rot) - Number(!!b.rot));
+            return (
+              <div key={`${c.name}-${ci}`} data-testid={`cause-${ci}`} style={{ ...S.card, border: ci === 0 ? "2px solid #b45309" : undefined }}>
+                <div style={{ fontSize: 21, fontWeight: 900 }}>
+                  {ci === 0 ? "가장 의심: " : `${ci + 1}. `}
+                  {c.name}
+                  <span style={{ fontSize: 16, color: "#666", fontWeight: 700 }}>
+                    {" "}
+                    ({c.kind} · {c.confidence}%)
+                  </span>
+                </div>
+                {c.why && <div style={{ marginTop: 4 }}>{c.why}</div>}
+                {pest && c.rx && rx.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontWeight: 900, color: GREEN }}>
+                      내 {cur.crop} {c.rx.target ?? c.name}에 등록된 약 {rx.length}가지 — 누르면 내 통·평수에 맞춰 알려 드려요
+                    </div>
+                    {rx.map(({ p, rot }, pi) => {
+                      const u = p.uses[p.my_use_index ?? 0];
+                      const dof = (p.maker ?? "").includes("도프");
+                      return (
+                        <button
+                          key={`${p.product_name}-${p.variant}-${pi}`}
+                          data-testid={`rx-${ci}-${pi}`}
+                          onClick={() => void openRx(p, c.rx?.target ?? c.name)}
+                          disabled={loading}
+                          style={{ ...S.subBtn, textAlign: "left", fontSize: 17, marginTop: 8, opacity: rot ? 0.75 : 1 }}
+                        >
+                          <div style={{ fontWeight: 900 }}>
+                            {p.product_name}
+                            {dof ? " 🌱도프" : ""}
+                            {p.moa_code ? ` [${p.moa_code}]` : ""}
+                          </div>
+                          <div style={{ fontSize: 15, color: "#555" }}>
+                            {[
+                              p.variant,
+                              u?.dilution && `${u.dilution}`,
+                              typeof u?.phi_days === "number" && `수확 ${u.phi_days}일 전까지`,
+                              typeof u?.max_count === "number" && `${u.max_count}회 이내`,
+                              p.source_label ? "제조사 자료" : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </div>
+                          {rot && <div style={{ fontSize: 14, color: "#b91c1c" }}>⚠ 지난번 친 약과 같은 계통 — 되도록 다른 약을</div>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {pest && c.rx && rx.length === 0 && (
+                  <div style={{ ...S.warn, marginTop: 8 }} data-testid={`rx-none-${ci}`}>
+                    {c.rx.code === "upstream" || c.rx.code === "no-key"
+                      ? "지금 등록 약 자료를 불러오지 못했습니다. 잠시 뒤 다시 해 주세요."
+                      : `내 ${cur.crop} ${c.name}에 등록된 약을 자료에서 찾지 못했습니다. 아무 약이나 치지 말고 농약사·농업기술센터에 확인하세요.`}
+                  </div>
+                )}
+                {!pest && (
+                  <div style={{ marginTop: 8, color: "#555" }}>
+                    약보다 관리(물·비료·온도)를 먼저 바로잡을 문제로 보입니다. 아래 &quot;지금 할 일&quot;을 보세요.
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {(
+            [
+              ["✅ 지금 할 일", diag.now],
+              ["⛔ 하지 말 것", diag.dont],
+              ["🔍 꼭 확인할 것", diag.check],
+            ] as const
+          ).map(([title, list]) =>
+            list.length > 0 ? (
+              <div key={title} style={S.card}>
+                <div style={{ fontWeight: 900 }}>{title}</div>
+                {list.map((x, i) => (
+                  <div key={i} style={{ marginTop: 4 }}>
+                    · {x}
+                  </div>
+                ))}
+              </div>
+            ) : null
+          )}
+          <button style={S.bigBtn} data-testid="diag-save" disabled={diagSaved} onClick={() => void saveDiag()}>
+            {diagSaved ? "✔ 일지에 남겼어요" : "📒 이 진단을 일지에 남기기"}
+          </button>
+          <PhotoButtons testid="diag-again" disabled={loading} onFile={(f) => void runDiagnose([f])} />
+          <p style={{ fontSize: 14, color: "#555", marginTop: 12 }}>
+            사진 진단은 참고용입니다. 약 목록은 {officialSource || "공식 등록 자료"}와 제조사 자료에서 내 작물·병해충에 등록된 것만 보여 드립니다. 치기 전에 라벨을 한 번 더 확인하고, 애매하면 농업기술센터에 물어보세요.
+          </p>
+        </>
+      )}
+
       {mode === "pick" && cur && (
         <>
           {curCard}
@@ -1627,7 +1859,13 @@ export default function PhotoDoctorV2() {
                       {e.target ? ` · ${e.target}` : ""}
                     </div>
                   ) : (
-                    <div>{e.kind === "growth" ? "🌿 작물 사진" : e.work ?? "🚜 작업"}</div>
+                    <div>
+                      {e.kind === "growth"
+                        ? "🌿 작물 사진"
+                        : e.kind === "diag"
+                          ? `🩺 진단${e.target ? ` · ${e.target} 의심` : ""}`
+                          : e.work ?? "🚜 작업"}
+                    </div>
                   )}
                   {e.memo && <div style={{ color: "#555" }}>{e.memo}</div>}
                   <button

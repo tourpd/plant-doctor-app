@@ -379,3 +379,33 @@ export function findMakerProducts(rawName: string, crop = ""): OfficialProduct[]
   }
   return out;
 }
+
+/** 병해충 이름의 핵심만 남긴다 ("진딧물류" → "진딧물", "응애류" → "응애") */
+const coreTarget = (v: string): string => norm(v).replace(/류$/, "");
+
+/**
+ * 내 작물 + 병해충에 쓸 수 있다고 제조사 자료에 적힌 제품 (사진 진단의 처방용).
+ * 작물·병해충이 표로 적힌 제품만 대상이다 ("해충"처럼 뭉뚱그린 줄은 넣지 않는다).
+ */
+export function findMakerForTarget(crop: string, target: string): OfficialProduct[] {
+  const t = coreTarget(target);
+  if (t.length < 2 || !crop.trim()) return [];
+  const out: OfficialProduct[] = [];
+  for (const e of ENTRIES) {
+    if (!e.rows) continue;
+    const hit = e.rows.some((r) => {
+      const rt = coreTarget(r.target);
+      if (rt.length < 2 || rt === "해충" || rt === "병해") return false;
+      const sameCrop = matchUseIndex([{ crop: r.crop }], crop) === 0;
+      return sameCrop && (t.includes(rt) || rt.includes(t));
+    });
+    if (!hit) continue;
+    const p = findMakerProducts(e.name, crop)[0];
+    if (!p) continue;
+    const i = p.uses.findIndex(
+      (u) => matchUseIndex([u], crop) === 0 && (t.includes(coreTarget(u.target ?? "")) || coreTarget(u.target ?? "").includes(t))
+    );
+    out.push({ ...p, my_use_index: i >= 0 ? i : 0 });
+  }
+  return out;
+}

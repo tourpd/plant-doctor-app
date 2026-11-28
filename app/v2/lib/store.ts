@@ -1,7 +1,7 @@
 // 포토닥터 2 — 사진 농사일지 저장소
 // 일지는 농민 휴대폰(IndexedDB)에만 저장한다. 서버 비용 0원, 로그인 불필요.
 
-export type EntryKind = "spray" | "growth" | "work";
+export type EntryKind = "spray" | "growth" | "work" | "diag";
 
 export type Entry = {
   id: string;

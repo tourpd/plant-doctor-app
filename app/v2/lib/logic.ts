@@ -483,8 +483,10 @@ export function toCsv(entries: Entry[]): string {
       ? e.category ?? kindName.spray
       : e.kind === "work"
         ? e.work ?? kindName.work
-        : kindName.growth;
-  const kindName = { spray: "약·영양제", growth: "작물 사진", work: "작업" } as const;
+        : e.kind === "diag"
+          ? kindName.diag
+          : kindName.growth;
+  const kindName = { spray: "약·영양제", growth: "작물 사진", work: "작업", diag: "사진 진단" } as const;
   const esc = (v: string | null | undefined) =>
     `"${String(v ?? "").replace(/"/g, '""')}"`;
   const rows = [...entries]

@@ -2,7 +2,7 @@
 // 제품 이름(상표명)으로 공식 등록 사용법을 찾는다. AI를 쓰지 않아 비용이 들지 않는다.
 import { NextResponse } from "next/server";
 import { OFFICIAL_SOURCE } from "../../../v2/lib/official";
-import { fetchRows, findOfficial } from "../../../v2/lib/officialFetch";
+import { fetchRows, findForTarget, findOfficial } from "../../../v2/lib/officialFetch";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
@@ -21,6 +21,23 @@ export async function GET(req: Request) {
       hit: hit.map((x) =>
         [x.C_BRAND_NM, x.C_ITEM_NM, x.C_CROP_NM, x.C_APLCN_DSINST_NM, x.A_DLTN_MLTPL_REGVL, x.C_USGQTY_REGVL, x.C_USE_PPRTM_REGVL, x.C_USE_MTHD_REGVL, x.A_SAFE_USE_ERA_REGVL, x.A_SAFE_USE_NOFTM_REGVL].join(" | ")
       ),
+    });
+  }
+  const target = (sp.get("target") ?? "").slice(0, 30);
+  if (target) {
+    const t = await findForTarget(crop, target);
+    return NextResponse.json({
+      ok: t.ok,
+      code: t.ok ? null : t.code,
+      target: t.ok ? t.target : null,
+      total: t.products.length,
+      products: t.products.slice(0, 30).map((p) => ({
+        name: p.product_name,
+        variant: p.variant,
+        moa: p.moa_code,
+        source: p.source_label ?? "공식",
+        use: p.uses[p.my_use_index ?? 0] ?? null,
+      })),
     });
   }
   const r = await findOfficial(q, crop);
