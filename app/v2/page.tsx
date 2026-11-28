@@ -18,7 +18,7 @@ import {
   setCurrentField,
 } from "./lib/store";
 import { prepareImageForUpload, SERVER_LIMIT } from "../../lib/clientImage";
-import type { Entry, FarmMode, FarmType, Field, Sprayer } from "./lib/store";
+import type { Entry, FarmMode, FarmType, Field, Rig } from "./lib/store";
 import { nearestRegion, searchRegions } from "./lib/regions";
 import type { Region } from "./lib/regions";
 import {
@@ -29,6 +29,8 @@ import {
   niceDate,
   recommendFor,
   rotationWarning,
+  rigLabel,
+  rigsOf,
   sprayCount,
   sprayPlan,
   tankOptions,
@@ -201,7 +203,7 @@ function fieldLine(f: Field): string {
     f.pots ? `화분 ${f.pots}개` : "",
     mode === "농사" ? f.type ?? "" : "",
     f.region ?? "",
-    f.tankL ? `${f.sprayer === "드론" ? "드론 " : ""}${f.tankL}L 통` : "",
+    rigsOf(f).map(rigLabel).join(" + "),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -278,8 +280,8 @@ export default function PhotoDoctorV2() {
   const [fType, setFType] = useState<FarmType>("노지");
   const [fMode, setFMode] = useState<FarmMode>("농사");
   const [fPots, setFPots] = useState("");
-  const [fSprayer, setFSprayer] = useState<Sprayer>("등짐");
-  const [fTank, setFTank] = useState("20");
+  const [fRigs, setFRigs] = useState<Rig[]>([{ sprayer: "등짐", tankL: 20 }]);
+  const [rigIdx, setRigIdx] = useState(0);
   const [waterAdj, setWaterAdj] = useState(1);
   const [usedWater, setUsedWater] = useState("");
   const [fRegion, setFRegion] = useState<Region | null>(null);
@@ -381,9 +383,9 @@ export default function PhotoDoctorV2() {
     setFType(f?.type ?? "노지");
     setFMode(modeOf(f));
     setFPots(f?.pots ? String(f.pots) : "");
-    const firstTank = tankOptions(modeOf(f))[0];
-    setFSprayer(f?.sprayer ?? firstTank.sprayer);
-    setFTank(String(f?.tankL ?? firstTank.liters));
+    const first = tankOptions(modeOf(f))[0];
+    const got = f ? rigsOf(f) : [];
+    setFRigs(got.length > 0 ? got : [{ sprayer: first.sprayer, tankL: first.liters }]);
     setFRegion(
       f?.region && f.lat !== undefined && f.lon !== undefined
         ? { name: f.region, lat: f.lat, lon: f.lon }
@@ -436,8 +438,9 @@ export default function PhotoDoctorV2() {
         area: fMode !== "베란다" && area > 0 ? area : undefined,
         pots: fMode === "베란다" && pots > 0 ? pots : undefined,
         type: fMode === "농사" ? fType : undefined,
-        sprayer: fSprayer,
-        tankL: Number(fTank) > 0 ? Number(fTank) : undefined,
+        rigs: fRigs.filter((r) => r.tankL > 0),
+        sprayer: fRigs[0]?.sprayer,
+        tankL: fRigs[0]?.tankL,
         waterPer10a: fields.find((f) => f.name === name)?.waterPer10a,
         region: fRegion?.name,
         lat: fRegion?.lat,
@@ -458,8 +461,20 @@ export default function PhotoDoctorV2() {
     if (!cur) return;
     const uses = Array.isArray(raw.uses) ? raw.uses : [];
     const ai = raw.my_use_index;
-    // 내 작물 줄 가운데 내 도구(드론이냐 아니냐)에 맞는 줄을 먼저 고른다
-    const wantDrone = cur.sprayer === "드론";
+    // 내 장비 가운데 이 제품에 맞는 것을 먼저 고른다 (드론 전용 약이면 드론으로)
+    const rigs = rigsOf(cur);
+    const onlyDrone = uses.length > 0 && uses.every((u) => u.drone);
+    const hasDroneRow = uses.some((u) => u.drone);
+    let ri = rigIdx < rigs.length ? rigIdx : 0;
+    if (onlyDrone) {
+      const d = rigs.findIndex((r) => r.sprayer === "드론");
+      if (d >= 0) ri = d;
+    } else if (!hasDroneRow && rigs[ri]?.sprayer === "드론") {
+      const d = rigs.findIndex((r) => r.sprayer !== "드론");
+      if (d >= 0) ri = d;
+    }
+    setRigIdx(ri);
+    const wantDrone = rigs[ri]?.sprayer === "드론";
     const fits = uses.findIndex((u) => matchUseIndex([u], cur.crop) === 0 && !!u.drone === wantDrone);
     const idx =
       fits >= 0
@@ -469,7 +484,7 @@ export default function PhotoDoctorV2() {
           : matchUseIndex(uses, cur.crop);
     setLabel({ ...raw, uses });
     setUseIdx(idx >= 0 ? idx : uses.length > 0 ? -2 : -1);
-    setTankL(String(cur.tankL ?? tankOptions(modeOf(cur))[0].liters));
+    setTankL(String(rigs[ri]?.tankL ?? tankOptions(modeOf(cur))[0].liters));
     setWaterAdj(1);
     setUsedWater("");
     setLabelFiles(files.slice(0, 2));
@@ -620,18 +635,36 @@ export default function PhotoDoctorV2() {
     window.speechSynthesis.speak(u);
   }
 
+  /** 장비를 바꾸면 그 장비에 맞는 사용법 줄로 옮긴다 */
+  function pickRig(i: number) {
+    setRigIdx(i);
+    if (!label || !cur) return;
+    const wantDrone = rigsOf(cur)[i]?.sprayer === "드론";
+    const next = label.uses.findIndex((u) => matchUseIndex([u], cur.crop) === 0 && !!u.drone === wantDrone);
+    setUseIdx(next >= 0 ? next : -2);
+    setTankL(String(rigsOf(cur)[i]?.tankL ?? 20));
+    setWaterAdj(1);
+    setUsedWater("");
+  }
+
   // ───── 내 밭 기준 계산 ─────
   const chosenUse = label && useIdx >= 0 ? label.uses[useIdx] : null;
   const offLabel = !!label && label.uses.length > 0 && useIdx === -2;
   const official = label?.source === "official";
   const missing = official ? NOT_IN_DATA : NOT_ON_LABEL;
+  const rigs = cur ? rigsOf(cur) : [];
+  const rig = rigs[rigIdx] ?? rigs[0] ?? null;
   // 내 작물에 등록된 줄이 여러 개면(병해충별) 골라서 본다
-  const myUses =
+  const myUsesAll =
     label && cur
       ? label.uses
           .map((u, i) => ({ u, i }))
           .filter(({ u }) => matchUseIndex([u], cur.crop) === 0)
       : [];
+  // 드론 줄과 분무기 줄은 희석배수·살포량 체계가 달라 섞어 보여 주지 않는다
+  const onDrone = rig?.sprayer === "드론";
+  const myUses = myUsesAll.filter(({ u }) => !!u.drone === onDrone);
+  const droneRows = myUsesAll.filter(({ u }) => u.drone).length;
   // 최근에 기록한 제품 (다시 찾기 쉽게)
   const recentProducts = Array.from(
     new Set(entries.filter((e) => e.kind === "spray" && e.product && e.product !== "이름 모름").map((e) => e.product as string))
@@ -640,8 +673,8 @@ export default function PhotoDoctorV2() {
   const plan = chosenUse
     ? sprayPlan(chosenUse, {
         areaPyeong: cur?.area,
-        sprayer: cur?.sprayer,
-        tankL: Number(tankL) || cur?.tankL,
+        sprayer: rig?.sprayer,
+        tankL: Number(tankL) || rig?.tankL,
         waterPer10a: cur?.waterPer10a,
         crop: cur?.crop,
         product: label?.product_name ?? undefined,
@@ -699,7 +732,7 @@ export default function PhotoDoctorV2() {
     await putEntry(entry);
     // 실제로 쓴 물량을 이 밭의 기준으로 기억한다 (다음 계산부터 반영)
     const used = Number(usedWater);
-    if (used > 0 && cur.area && cur.area > 0 && cur.sprayer !== "드론") {
+    if (used > 0 && cur.area && cur.area > 0 && rig?.sprayer !== "드론") {
       const per10a = Math.round((used / (cur.area / 302.5)) * 10) / 10;
       const next = fields.map((f) => (f.name === cur.name ? { ...f, waterPer10a: per10a } : f));
       setFields(next);
@@ -838,8 +871,7 @@ export default function PhotoDoctorV2() {
                   // 밭 종류가 바뀌면 그에 맞는 통으로 기본값을 바꾼다
                   if (m.mode !== fMode) {
                     const o = tankOptions(m.mode)[0];
-                    setFSprayer(o.sprayer);
-                    setFTank(String(o.liters));
+                    setFRigs([{ sprayer: o.sprayer, tankL: o.liters }]);
                   }
                 }}
                 style={{ ...chip(fMode === m.mode), flex: 1, borderRadius: 16, padding: "10px 4px" }}
@@ -903,32 +935,52 @@ export default function PhotoDoctorV2() {
               </div>
             </>
           )}
-          <label style={S.label}>약 칠 때 쓰는 통</label>
+          <label style={S.label}>약 칠 때 쓰는 통 (쓰는 것을 다 고르세요)</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
-            {tankOptions(fMode).map((o) => (
-              <button
-                key={o.label}
-                data-testid={`tank-${o.sprayer}-${o.liters}`}
-                onClick={() => {
-                  setFSprayer(o.sprayer);
-                  setFTank(String(o.liters));
+            {tankOptions(fMode).map((o) => {
+              const on = fRigs.some((r) => r.sprayer === o.sprayer && r.tankL === o.liters);
+              return (
+                <button
+                  key={o.label}
+                  data-testid={`tank-${o.sprayer}-${o.liters}`}
+                  onClick={() =>
+                    setFRigs((prev) =>
+                      on
+                        ? prev.filter((r) => !(r.sprayer === o.sprayer && r.tankL === o.liters))
+                        : [...prev, { sprayer: o.sprayer, tankL: o.liters }]
+                    )
+                  }
+                  style={chip(on)}
+                >
+                  {o.sprayer === "드론" ? "🚁 " : ""}
+                  {o.label}
+                </button>
+              );
+            })}
+          </div>
+          {fRigs.length === 0 && <div style={{ ...S.warn, marginTop: 8 }}>약통을 적어도 하나 고르세요.</div>}
+          {fRigs.map((r, i) => (
+            <div key={`${r.sprayer}-${i}`} style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+              <span style={{ fontWeight: 800, minWidth: 92 }}>
+                {r.sprayer === "드론" ? "🚁 드론" : r.sprayer === "동력" ? "동력분무기" : r.sprayer === "등짐" ? "등짐 분무기" : "분무기"}
+              </span>
+              <input
+                style={{ ...S.input, flex: 1, marginTop: 0 }}
+                data-testid={i === 0 ? "f-tank" : `f-tank-${i}`}
+                inputMode="decimal"
+                value={String(r.tankL)}
+                onChange={(e) => {
+                  const v = Number(e.target.value.replace(/[^0-9.]/g, "")) || 0;
+                  setFRigs((prev) => prev.map((x, j) => (j === i ? { ...x, tankL: v } : x)));
                 }}
-                style={chip(fSprayer === o.sprayer && Number(fTank) === o.liters)}
-              >
-                {o.label}
+              />
+              <span style={{ fontWeight: 800 }}>리터</span>
+              <button data-testid={`rig-del-${i}`} onClick={() => setFRigs((prev) => prev.filter((_, j) => j !== i))} style={{ ...chip(false), padding: "0 12px" }}>
+                ✕
               </button>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
-            <input
-              style={{ ...S.input, flex: 1, marginTop: 0 }}
-              data-testid="f-tank"
-              inputMode="decimal"
-              value={fTank}
-              onChange={(e) => setFTank(e.target.value.replace(/[^0-9.]/g, ""))}
-            />
-            <span style={{ fontWeight: 800 }}>리터 (크기가 다르면 숫자를 고치세요)</span>
-          </div>
+            </div>
+          ))}
+          <div style={{ fontSize: 14, color: "#666", marginTop: 4 }}>크기가 다르면 숫자를 고치세요. 드론과 분무기를 함께 쓰면 둘 다 고르세요.</div>
           {fMode !== "베란다" && (
             <>
               <label style={S.label}>지역 (시·군)</label>
@@ -1170,7 +1222,21 @@ export default function PhotoDoctorV2() {
             <div style={{ ...S.card, border: `2px solid ${GREEN}` }}>
               <div style={{ fontWeight: 900 }}>
                 내 {cur.crop} 기준{chosenUse.target ? ` · ${chosenUse.target}` : ""}
+                {rig ? ` · ${rigLabel(rig)}` : ""}
               </div>
+              {rigs.length > 1 && (
+                <div style={{ margin: "8px 0" }}>
+                  <div style={{ fontSize: 15, color: "#555" }}>무엇으로 치시나요?</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+                    {rigs.map((r, i) => (
+                      <button key={`${r.sprayer}-${r.tankL}-${i}`} data-testid={`rig-${i}`} style={chip(rigIdx === i)} onClick={() => pickRig(i)}>
+                        {r.sprayer === "드론" ? "🚁 " : ""}
+                        {rigLabel(r)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {myUses.length > 1 && (
                 <div style={{ margin: "8px 0" }}>
                   <div style={{ fontSize: 15, color: "#555" }}>
@@ -1212,6 +1278,12 @@ export default function PhotoDoctorV2() {
                   {plan.blocked}
                 </div>
               )}
+              {!onDrone && droneRows > 0 && (
+                <div data-testid="drone-available" style={{ fontSize: 15, color: GREEN, fontWeight: 800, marginTop: 8 }}>
+                  🚁 이 약은 드론(무인항공) 사용법도 등록되어 있습니다
+                  {rigs.some((r) => r.sprayer === "드론") ? " — 위에서 드론을 고르세요." : " — 드론을 쓰시면 밭 등록에서 드론을 추가하세요."}
+                </div>
+              )}
               {canAdjustWater && (
                 <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                   {(
@@ -1228,7 +1300,7 @@ export default function PhotoDoctorV2() {
                 </div>
               )}
               {plan?.basis && <div style={{ fontSize: 14, color: "#666", marginTop: 6 }}>{plan.basis}</div>}
-              {!cur.tankL && dose.length > 0 && (
+              {rigs.length === 0 && dose.length > 0 && (
                 <button style={{ ...S.subBtn, fontSize: 16 }} onClick={() => openFieldForm(cur)}>
                   내 약통 크기 알려 주기 (지금은 20L로 계산)
                 </button>
@@ -1337,7 +1409,7 @@ export default function PhotoDoctorV2() {
             <>
               <label style={S.label}>물 몇 리터에 타나요?</label>
               <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                {Array.from(new Set([String(cur.tankL ?? ""), ...tankOptions(curMode).filter((o) => (o.sprayer === "드론") === (cur.sprayer === "드론")).map((o) => String(o.liters))].filter(Boolean)))
+                {Array.from(new Set([String(rig?.tankL ?? ""), ...tankOptions(curMode).filter((o) => (o.sprayer === "드론") === onDrone).map((o) => String(o.liters))].filter(Boolean)))
                   .slice(0, 4)
                   .map((v) => (
                     <button key={v} onClick={() => setTankL(v)} style={{ ...chip(tankL === v), flex: 1 }}>
@@ -1359,7 +1431,7 @@ export default function PhotoDoctorV2() {
             </>
           ) : null}
 
-          {plan?.waterL != null && cur.area && cur.sprayer !== "드론" ? (
+          {plan?.waterL != null && cur.area && !onDrone ? (
             <>
               <label style={S.label}>실제로 물을 몇 리터 썼나요? (적어 두면 다음부터 내 밭에 맞춰 계산해요)</label>
               <input

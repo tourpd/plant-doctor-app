@@ -1,7 +1,7 @@
 // 포토닥터 2 — 알림·교호 살포·추천 규칙
 // AI를 쓰지 않는 고정 규칙이다. 비용 0원, 엉뚱한 안내 방지.
 
-import type { Entry, FarmMode, Field, Sprayer } from "./store";
+import type { Entry, FarmMode, Field, Rig, Sprayer } from "./store";
 
 export function today(): string {
   return toDateStr(new Date());
@@ -233,6 +233,19 @@ export function tankOptions(mode: FarmMode): TankOption[] {
     { sprayer: "동력", liters: 1000, label: "동력분무기 1,000L 통" },
     { sprayer: "드론", liters: 16, label: "드론 16L 통" },
   ];
+}
+
+/** 밭에 등록된 장비 목록. 옛 기록(통 하나)도 한 대로 읽는다 */
+export function rigsOf(f: { rigs?: Rig[]; sprayer?: Sprayer; tankL?: number; mode?: FarmMode; pots?: number }): Rig[] {
+  if (f.rigs && f.rigs.length > 0) return f.rigs;
+  if (f.sprayer && f.tankL) return [{ sprayer: f.sprayer, tankL: f.tankL }];
+  return [];
+}
+
+/** 장비 이름을 농민이 쓰는 말로 */
+export function rigLabel(r: Rig): string {
+  const name = r.sprayer === "드론" ? "드론" : r.sprayer === "동력" ? "동력분무기" : r.sprayer === "등짐" ? "등짐 분무기" : "분무기";
+  return `${name} ${fmt(r.tankL)}L`;
 }
 
 const FRUIT_TREES = ["사과", "배", "복숭아", "포도", "감", "감귤", "귤", "자두", "매실", "대추", "밤", "체리", "살구", "유자", "키위", "참다래", "블루베리", "무화과", "석류", "호두"];
